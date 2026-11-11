@@ -317,6 +317,13 @@ StringTools.htmlEscape = function(s,quotes) {
 	}
 	return buf_b;
 };
+StringTools.startsWith = function(s,start) {
+	if(s.length >= start.length) {
+		return s.lastIndexOf(start,0) == 0;
+	} else {
+		return false;
+	}
+};
 StringTools.endsWith = function(s,end) {
 	var elen = end.length;
 	var slen = s.length;
@@ -3146,7 +3153,7 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 			_gthis.goToPage(_gthis.currentPageIndex() - 1);
 		}, next : function() {
 			_gthis.goToPage(_gthis.currentPageIndex() + 1);
-		}, add : $bind(this,this.addPage), remove : $bind(this,this.removePage)});
+		}, add : $bind(this,this.addPage), remove : $bind(this,this.removePage), clear : $bind(this,this.clearPage)});
 		this.ui.addChild(this.pageBar);
 		this.binderPanel = new app_ui_BinderPanel({ select : $bind(this,this.selectBinder), create : $bind(this,this.createBinder), rename : $bind(this,this.renameBinder), remove : $bind(this,this.removeBinder)});
 		this.ui.addChild(this.binderPanel);
@@ -3390,6 +3397,16 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		b.pages.splice(index,0,page);
 		b.updatedAt = new Date().getTime();
 		this.goToPage(index);
+	}
+	,clearPage: function() {
+		if(this.brush.active) {
+			return;
+		}
+		if(!window.confirm("このページの内容をすべて消去しますか？\n（元に戻せません）")) {
+			return;
+		}
+		this.chunks.clearPage();
+		this.world.invalidateRange();
 	}
 	,removePage: function() {
 		var _gthis = this;
@@ -3785,6 +3802,53 @@ app_canvas_ChunkManager.prototype = {
 		this.ready = false;
 		this.pageId = null;
 		this.generation++;
+	}
+	,clearPage: function() {
+		var _gthis = this;
+		if(this.pageId == null || !this.ready) {
+			return;
+		}
+		var page = this.pageId;
+		this.generation++;
+		var h = this.chunks.h;
+		var c_h = h;
+		var c_keys = Object.keys(h);
+		var c_length = c_keys.length;
+		var c_current = 0;
+		while(c_current < c_length) {
+			var c = c_h[c_keys[c_current++]];
+			c.dispose();
+		}
+		this.chunks.h = Object.create(null);
+		this.stored.h = Object.create(null);
+		this.loaded = [];
+		this.touched = [];
+		var _g = 0;
+		var _g1 = [];
+		var h = this.unsaved.h;
+		var k_h = h;
+		var k_keys = Object.keys(h);
+		var k_length = k_keys.length;
+		var k_current = 0;
+		while(k_current < k_length) {
+			var k = k_keys[k_current++];
+			_g1.push(k);
+		}
+		var _g2 = _g1;
+		while(_g < _g2.length) {
+			var key = _g2[_g];
+			++_g;
+			if(StringTools.startsWith(key,page + "|")) {
+				var _this = this.unsaved;
+				if(Object.prototype.hasOwnProperty.call(_this.h,key)) {
+					delete(_this.h[key]);
+				}
+			}
+		}
+		this.queue.enqueue(function() {
+			return _gthis.db.deletePage(page);
+		});
+		starling_core_Starling.get_current().setRequiresRedraw();
 	}
 	,setStyle: function(s) {
 		this.flushStamps();
@@ -4593,6 +4657,9 @@ app_export_PdfExporter.download = function(blob,name) {
 	},30000);
 };
 var app_input_PointerInput = function(canvas,target) {
+	this.safariScale = 1;
+	this.pendingPoints = [];
+	this.pendingId = -1;
 	this.spaceDown = false;
 	this.panY = 0;
 	this.panX = 0;
@@ -4630,6 +4697,9 @@ var app_input_PointerInput = function(canvas,target) {
 			e.preventDefault();
 		}
 	},{ passive : false});
+	canvas.addEventListener("gesturestart",$bind(this,this.onSafariGesture),{ passive : false});
+	canvas.addEventListener("gesturechange",$bind(this,this.onSafariGesture),{ passive : false});
+	canvas.addEventListener("gestureend",$bind(this,this.onSafariGesture),{ passive : false});
 	window.addEventListener("keydown",$bind(this,this.onKey));
 	window.addEventListener("keyup",$bind(this,this.onKey));
 	window.addEventListener("blur",function(_) {
@@ -4638,6 +4708,14 @@ var app_input_PointerInput = function(canvas,target) {
 };
 $hxClasses["app.input.PointerInput"] = app_input_PointerInput;
 app_input_PointerInput.__name__ = "app.input.PointerInput";
+app_input_PointerInput.coalesced = function(e) {
+	var list = e.getCoalescedEvents != null ? e.getCoalescedEvents() : null;
+	if(list == null || list.length == 0) {
+		return [e];
+	} else {
+		return list;
+	}
+};
 app_input_PointerInput.penContact = function(e) {
 	return (e.buttons & 33) != 0;
 };
@@ -4667,6 +4745,9 @@ app_input_PointerInput.prototype = {
 	,panX: null
 	,panY: null
 	,spaceDown: null
+	,pendingId: null
+	,pendingPoints: null
+	,safariScale: null
 	,onDown: function(e) {
 		var x = e.clientX;
 		var y = e.clientY;
@@ -4699,8 +4780,9 @@ app_input_PointerInput.prototype = {
 			}
 			this.touches.h[e.pointerId] = { x : x, y : y};
 			if(!this.penSeen && this.touchCount() == 1 && this.drawPointer == -1) {
-				this.startStroke(e,x,y);
+				this.beginPending(e);
 			} else {
+				this.cancelPending();
 				if(this.drawPointer != -1 && this.drawType == "touch") {
 					this.endStroke();
 				}
@@ -4736,14 +4818,33 @@ app_input_PointerInput.prototype = {
 				return;
 			}
 		}
-		if(id == this.drawPointer) {
-			var list = e.getCoalescedEvents != null ? e.getCoalescedEvents() : null;
-			if(list == null || list.length == 0) {
-				list = [e];
-			}
+		if(id == this.pendingId) {
 			var _g = 0;
-			while(_g < list.length) {
-				var ev = list[_g];
+			var _g1 = app_input_PointerInput.coalesced(e);
+			while(_g < _g1.length) {
+				var ev = _g1[_g];
+				++_g;
+				this.pendingPoints.push(ev.clientX);
+				this.pendingPoints.push(ev.clientY);
+				this.pendingPoints.push(ev.timeStamp);
+			}
+			var dx = e.clientX - this.pendingPoints[0];
+			var dy = e.clientY - this.pendingPoints[1];
+			if(dx * dx + dy * dy >= 64. || e.timeStamp - this.pendingPoints[2] >= 100) {
+				this.commitPending();
+			}
+			var t = this.touches.h[id];
+			if(t != null) {
+				t.x = e.clientX;
+				t.y = e.clientY;
+			}
+			return;
+		}
+		if(id == this.drawPointer) {
+			var _g = 0;
+			var _g1 = app_input_PointerInput.coalesced(e);
+			while(_g < _g1.length) {
+				var ev = _g1[_g];
 				++_g;
 				this.target.strokeMove(ev.clientX,ev.clientY,ev.timeStamp);
 			}
@@ -4776,6 +4877,9 @@ app_input_PointerInput.prototype = {
 		if(this.ignored.h.hasOwnProperty(id)) {
 			this.ignored.remove(id);
 			return;
+		}
+		if(id == this.pendingId) {
+			this.commitPending();
 		}
 		if(id == this.drawPointer) {
 			this.endStroke();
@@ -4815,6 +4919,57 @@ app_input_PointerInput.prototype = {
 			this.spaceDown = e.type == "keydown";
 			e.preventDefault();
 		}
+	}
+	,beginPending: function(e) {
+		var _gthis = this;
+		this.pendingId = e.pointerId;
+		this.pendingPoints = [e.clientX,e.clientY,e.timeStamp];
+		var id = this.pendingId;
+		haxe_Timer.delay(function() {
+			if(_gthis.pendingId == id) {
+				_gthis.commitPending();
+			}
+		},100);
+	}
+	,cancelPending: function() {
+		this.pendingId = -1;
+		this.pendingPoints = [];
+	}
+	,commitPending: function() {
+		if(this.pendingId == -1) {
+			return;
+		}
+		var id = this.pendingId;
+		var p = this.pendingPoints;
+		this.cancelPending();
+		if(!this.target.canDraw() || this.drawPointer != -1) {
+			return;
+		}
+		this.drawPointer = id;
+		this.drawType = "touch";
+		this.target.strokeBegin(p[0],p[1],p[2],false);
+		var i = 3;
+		while(i < p.length) {
+			this.target.strokeMove(p[i],p[i + 1],p[i + 2]);
+			i += 3;
+		}
+	}
+	,onSafariGesture: function(e) {
+		e.preventDefault();
+		if(this.touchCount() > 0) {
+			return;
+		}
+		if(e.type == "gesturestart") {
+			this.safariScale = 1;
+			return;
+		}
+		var scale = e.scale;
+		if(e.type == "gesturechange" && scale > 0 && !this.target.get_zoomLocked()) {
+			var x = e.clientX;
+			var y = e.clientY;
+			this.target.zoomAt(x,y,scale / this.safariScale);
+		}
+		this.safariScale = scale;
 	}
 	,startStroke: function(e,x,y) {
 		if(!this.target.canDraw()) {
@@ -7371,6 +7526,12 @@ app_ui_Icons.paint = function(c,name) {
 		app_ui_Icons.line(c,12,8,16,8);
 		app_ui_Icons.line(c,12,11,16,11);
 		break;
+	case "clear":
+		app_ui_Icons.line(c,18,3,12.5,11);
+		app_ui_Icons.poly(c,[8,10.5,15.5,13.5,13,21,4,17.5],true);
+		app_ui_Icons.line(c,7,18.5,9.5,14);
+		app_ui_Icons.line(c,10,19.8,12,15);
+		break;
 	case "close":
 		app_ui_Icons.line(c,6,6,18,18);
 		app_ui_Icons.line(c,18,6,6,18);
@@ -8079,6 +8240,7 @@ var app_ui_PageBar = function(actions) {
 	this.nextButton = app_ui_Ui.iconButton("next",actions.next);
 	this.addChild(this.nextButton);
 	this.addChild(app_ui_Ui.iconButton("plus",actions.add));
+	this.addChild(app_ui_Ui.iconButton("clear",actions.clear));
 	this.addChild(app_ui_Ui.iconButton("trash",actions.remove));
 };
 $hxClasses["app.ui.PageBar"] = app_ui_PageBar;
@@ -66045,6 +66207,8 @@ app_export_PdfExporter.MARGIN = 32;
 app_export_PdfExporter.PT_PER_CANVAS_PX = 0.375;
 app_export_PdfExporter.MAX_PAGE_PT = 14400;
 app_input_PointerInput.PALM_SIZE = 40;
+app_input_PointerInput.TOUCH_DRAW_DISTANCE = 8;
+app_input_PointerInput.TOUCH_DRAW_DELAY = 100;
 app_model_Palette.COLORS = [0,15113984,5682409,40563,15787074,29362,13983232,13400487];
 app_model_ToolState.STORAGE_KEY = "simple_pen.tools";
 app_store_Db.NAME = "simple_pen";
