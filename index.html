@@ -27,6 +27,7 @@
 			user-select: none;
 			-webkit-touch-callout: none;
 		}
+		html.dark, html.dark body { background: #121212; }
 		#khanvas {
 			position: fixed;
 			left: 0;
@@ -39,11 +40,20 @@
 			touch-action: none;
 		}
 	</style>
+	<script>
+		// before the app starts: title bar / background follow the saved dark mode (no flash)
+		try {
+			if (JSON.parse(localStorage.getItem('simple_pen.tools') || '{}').darkMode) {
+				document.querySelector('meta[name="theme-color"]').content = '#242424';
+				document.documentElement.className = 'dark';
+			}
+		} catch (e) {}
+	</script>
 </head>
 <body>
 	<canvas id="khanvas" tabindex="-1"></canvas>
 	<!-- release.js replaces kha.js with the hashed file name -->
-	<script src="kha.f01a078af9a0.js"></script>
+	<script src="kha.a1897fc11ae4.js"></script>
 	<script>
 		if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 			window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });

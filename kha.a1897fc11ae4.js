@@ -9904,8 +9904,21 @@ app_ui_Theme.setDark = function(value) {
 		++_g;
 		f();
 	}
-	var tmp = app_ui_Theme.dark ? "#242424" : "#ffffff";
+	var tmp = app_ui_Theme.dark ? "dark" : "";
+	window.document.documentElement.className = tmp;
+	var tmp = app_ui_Theme.dark ? "#121212" : "#ffffff";
 	window.document.body.style.background = tmp;
+	app_ui_Theme.updateThemeColor();
+};
+app_ui_Theme.updateThemeColor = function() {
+	var doc = window.document;
+	var meta = doc.querySelector("meta[name=\"theme-color\"]");
+	if(meta == null) {
+		meta = doc.createElement("meta");
+		meta.name = "theme-color";
+		doc.head.appendChild(meta);
+	}
+	meta.content = "#" + StringTools.hex(app_ui_Theme.color(0),6);
 };
 var feathers_core_IFocusDisplayObject = function() { };
 $hxClasses["feathers.core.IFocusDisplayObject"] = feathers_core_IFocusDisplayObject;
