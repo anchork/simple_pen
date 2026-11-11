@@ -3062,6 +3062,10 @@ var app_Root = function() {
 	this.libraryDirty = false;
 	this.saveAt = -1;
 	this.hoverEraser = false;
+	this.rawY = 0;
+	this.rawX = 0;
+	this.stabilizing = false;
+	this.stabilizer = new app_input_Stabilizer();
 	this.hovering = false;
 	this.pointerY = 0;
 	this.pointerX = 0;
@@ -3101,11 +3105,16 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 	,pointerX: null
 	,pointerY: null
 	,hovering: null
+	,stabilizer: null
+	,stabilizing: null
+	,rawX: null
+	,rawY: null
 	,hoverEraser: null
 	,ui: null
 	,toolbar: null
 	,pageBar: null
 	,binderPanel: null
+	,zoomMenu: null
 	,library: null
 	,saveAt: null
 	,libraryDirty: null
@@ -3147,7 +3156,7 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		this.tools.addEventListener("change",$bind(this,this.updateCursor));
 		this.ui = new starling_display_Sprite();
 		this.addChild(this.ui);
-		this.toolbar = new app_ui_Toolbar(this.tools,{ exportPdf : $bind(this,this.exportPdf), openBinders : $bind(this,this.openBinders)});
+		this.toolbar = new app_ui_Toolbar(this.tools,{ exportPdf : $bind(this,this.exportPdf), openBinders : $bind(this,this.openBinders), openZoomMenu : $bind(this,this.openZoomMenu)});
 		this.ui.addChild(this.toolbar);
 		this.pageBar = new app_ui_PageBar({ prev : function() {
 			_gthis.goToPage(_gthis.currentPageIndex() - 1);
@@ -3157,6 +3166,8 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		this.ui.addChild(this.pageBar);
 		this.binderPanel = new app_ui_BinderPanel({ select : $bind(this,this.selectBinder), create : $bind(this,this.createBinder), rename : $bind(this,this.renameBinder), remove : $bind(this,this.removeBinder)});
 		this.ui.addChild(this.binderPanel);
+		this.zoomMenu = new app_ui_ZoomMenu($bind(this,this.setZoom));
+		this.ui.addChild(this.zoomMenu);
 		this.input = new app_input_PointerInput(window.document.getElementById("khanvas"),this);
 		this.get_stage().addEventListener("resize",$bind(this,this.onResize));
 		this.layout();
@@ -3232,6 +3243,10 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		var _this = this.world;
 		var _this1 = this.world;
 		this.brush.begin(_this.viewX + x / (_this.zoom / 2.0),_this1.viewY + y / (_this1.zoom / 2.0),this.baseDiameter);
+		this.stabilizing = this.tools.stabilizer && !this.strokeErase;
+		this.stabilizer.reset(x,y,time);
+		this.rawX = x;
+		this.rawY = y;
 		this.pointerX = x;
 		this.pointerY = y;
 		this.updateCursor();
@@ -3240,14 +3255,29 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		if(this.strokeErase) {
 			this.growEraser(x,y,time);
 		}
-		var _this = this.world;
-		var _this1 = this.world;
-		this.brush.move(_this.viewX + x / (_this.zoom / 2.0),_this1.viewY + y / (_this1.zoom / 2.0));
+		this.rawX = x;
+		this.rawY = y;
+		if(this.stabilizing) {
+			this.stabilizer.filter(x,y,time);
+			var _this = this.world;
+			var _this1 = this.world;
+			this.brush.move(_this.viewX + this.stabilizer.x / (_this.zoom / 2.0),_this1.viewY + this.stabilizer.y / (_this1.zoom / 2.0));
+		} else {
+			var _this = this.world;
+			var _this1 = this.world;
+			this.brush.move(_this.viewX + x / (_this.zoom / 2.0),_this1.viewY + y / (_this1.zoom / 2.0));
+		}
 		this.pointerX = x;
 		this.pointerY = y;
 		this.updateCursor();
 	}
 	,strokeEnd: function() {
+		if(this.stabilizing && this.brush.active) {
+			var _this = this.world;
+			var _this1 = this.world;
+			this.brush.move(_this.viewX + this.rawX / (_this.zoom / 2.0),_this1.viewY + this.rawY / (_this1.zoom / 2.0));
+		}
+		this.stabilizing = false;
 		this.brush.end();
 		this.chunks.flushStamps();
 		this.eraseScale = 1;
@@ -3326,6 +3356,7 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		this.saveAt = kha_Scheduler.realTime() * 1000 + 600;
 	}
 	,viewChanged: function() {
+		this.toolbar.setZoom(this.world.zoom);
 		this.libraryDirty = true;
 		this.scheduleSave();
 	}
@@ -3372,6 +3403,7 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		var b = this.currentBinder();
 		var p = b.pages[this.currentPageIndex()];
 		this.world.setView(p.viewX,p.viewY,p.zoom);
+		this.toolbar.setZoom(this.world.zoom);
 		this.chunks.openPage(p.id).then(function(_) {
 			_gthis.world.invalidateRange();
 			return null;
@@ -3407,6 +3439,18 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		}
 		this.chunks.clearPage();
 		this.world.invalidateRange();
+	}
+	,openZoomMenu: function(anchor) {
+		if(this.zoomMenu.isOpen) {
+			this.zoomMenu.close();
+			return;
+		}
+		this.zoomMenu.open(anchor.getBounds(this.get_stage()),this.world.zoom,this.get_stage().get_stageWidth(),this.get_stage().get_stageHeight());
+	}
+	,setZoom: function(zoom) {
+		this.world.zoomAt(this.get_stage().get_stageWidth() / 2,this.get_stage().get_stageHeight() / 2,zoom / this.world.zoom);
+		this.viewChanged();
+		this.updateCursor();
 	}
 	,removePage: function() {
 		var _gthis = this;
@@ -5164,6 +5208,55 @@ app_input_PointerInput.prototype = {
 	}
 	,__class__: app_input_PointerInput
 };
+var app_input_Stabilizer = function() {
+	this.time = 0;
+	this.vy = 0;
+	this.vx = 0;
+	this.y = 0;
+	this.x = 0;
+	this.speedCutoff = 1.0;
+	this.beta = 0.008;
+	this.minCutoff = 2.5;
+};
+$hxClasses["app.input.Stabilizer"] = app_input_Stabilizer;
+app_input_Stabilizer.__name__ = "app.input.Stabilizer";
+app_input_Stabilizer.alpha = function(cutoff,dt) {
+	var tau = 1 / (2 * Math.PI * cutoff);
+	return 1 / (1 + tau / dt);
+};
+app_input_Stabilizer.prototype = {
+	minCutoff: null
+	,beta: null
+	,speedCutoff: null
+	,x: null
+	,y: null
+	,vx: null
+	,vy: null
+	,time: null
+	,reset: function(x,y,time) {
+		this.x = x;
+		this.y = y;
+		this.time = time;
+		this.vx = this.vy = 0;
+	}
+	,filter: function(rawX,rawY,now) {
+		var dt = (now - this.time) / 1000;
+		if(dt <= 0) {
+			dt = 0.00416666666666666661;
+		}
+		this.time = now;
+		var tau = 1 / (2 * Math.PI * this.speedCutoff);
+		var a = 1 / (1 + tau / dt);
+		this.vx += a * ((rawX - this.x) / dt - this.vx);
+		this.vy += a * ((rawY - this.y) / dt - this.vy);
+		var speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+		var tau = 1 / (2 * Math.PI * (this.minCutoff + this.beta * speed));
+		var b = 1 / (1 + tau / dt);
+		this.x += b * (rawX - this.x);
+		this.y += b * (rawY - this.y);
+	}
+	,__class__: app_input_Stabilizer
+};
 var app_model_Library = function() { };
 $hxClasses["app.model.Library"] = app_model_Library;
 app_model_Library.__name__ = "app.model.Library";
@@ -5234,6 +5327,7 @@ var app_model_Palette = function() { };
 $hxClasses["app.model.Palette"] = app_model_Palette;
 app_model_Palette.__name__ = "app.model.Palette";
 var app_model_ToolState = function() {
+	this.stabilizer = true;
 	this.darkMode = false;
 	this.zoomLock = false;
 	this.panLock = false;
@@ -5264,6 +5358,7 @@ app_model_ToolState.prototype = $extend(starling_events_EventDispatcher.prototyp
 	,panLock: null
 	,zoomLock: null
 	,darkMode: null
+	,stabilizer: null
 	,get_color: function() {
 		return app_model_Palette.COLORS[this.colorIndex];
 	}
@@ -5325,12 +5420,13 @@ app_model_ToolState.prototype = $extend(starling_events_EventDispatcher.prototyp
 			this.panLock = d.panLock == true;
 			this.zoomLock = d.zoomLock == true;
 			this.darkMode = d.darkMode == true;
+			this.stabilizer = d.stabilizer != false;
 		} catch( _g ) {
 		}
 	}
 	,save: function() {
 		try {
-			js_Browser.getLocalStorage().setItem("simple_pen.tools",JSON.stringify({ tool : this.tool, colorIndex : this.colorIndex, penWidth : this.penWidth, eraserWidth : this.eraserWidth, panLock : this.panLock, zoomLock : this.zoomLock, darkMode : this.darkMode}));
+			js_Browser.getLocalStorage().setItem("simple_pen.tools",JSON.stringify({ tool : this.tool, colorIndex : this.colorIndex, penWidth : this.penWidth, eraserWidth : this.eraserWidth, panLock : this.panLock, zoomLock : this.zoomLock, darkMode : this.darkMode, stabilizer : this.stabilizer}));
 		} catch( _g ) {
 		}
 	}
@@ -7595,6 +7691,10 @@ app_ui_Icons.paint = function(c,name) {
 		app_ui_Icons.line(c,12,8,16,8);
 		app_ui_Icons.line(c,12,11,16,11);
 		break;
+	case "chevron-down":
+		c.lineWidth = 1.8;
+		app_ui_Icons.poly(c,[8,10,12,14,16,10]);
+		break;
 	case "clear":
 		app_ui_Icons.line(c,18,3,12.5,11);
 		app_ui_Icons.poly(c,[8,10.5,15.5,13.5,13,21,4,17.5],true);
@@ -7675,6 +7775,17 @@ app_ui_Icons.paint = function(c,name) {
 		c.lineTo(18,8);
 		c.lineTo(10,16);
 		c.closePath();
+		c.stroke();
+		break;
+	case "stabilizer":
+		c.save();
+		c.globalAlpha = 0.5;
+		c.lineWidth = 1.5;
+		app_ui_Icons.poly(c,[3,9,5.5,6.5,7,9.5,9.5,5.5,11.5,8.5,13.5,5,15.5,7.5,18,4.5,21,6]);
+		c.restore();
+		c.beginPath();
+		c.moveTo(3,18);
+		c.bezierCurveTo(8,11,15,22,21,14);
 		c.stroke();
 		break;
 	case "sun":
@@ -12827,6 +12938,15 @@ var app_ui_Toolbar = function(tools,actions) {
 	});
 	this.addChild(this.penButton);
 	this.addChild(this.eraserButton);
+	this.stabilizerButton = app_ui_Ui.iconToggle("stabilizer","stabilizer");
+	this.stabilizerButton.addEventListener("change",function(_) {
+		if(_gthis.updating) {
+			return;
+		}
+		tools.stabilizer = _gthis.stabilizerButton.get_isSelected();
+		tools.changed();
+	});
+	this.addChild(this.stabilizerButton);
 	this.addChild(app_ui_Ui.separator());
 	var colorGroup = new feathers_core_ToggleGroup();
 	var _g = 0;
@@ -12880,6 +13000,16 @@ var app_ui_Toolbar = function(tools,actions) {
 	});
 	this.addChild(this.panLock);
 	this.addChild(this.zoomLock);
+	this.zoomButton = app_ui_Ui.labelButton(null,app_ui_ZoomMenu.label(1),function() {
+		actions.openZoomMenu(_gthis.zoomButton);
+	});
+	this.zoomButton.set_defaultIcon(app_ui_Icons.image("chevron-down",9));
+	this.zoomButton.set_iconPosition("right");
+	this.zoomButton.set_gap(2);
+	this.zoomButton.set_paddingLeft(8);
+	this.zoomButton.set_paddingRight(4);
+	this.zoomButton.set_width(78);
+	this.addChild(this.zoomButton);
 	this.addChild(app_ui_Ui.separator());
 	this.darkButton = app_ui_Ui.iconToggle("moon","sun");
 	this.darkButton.addEventListener("change",function(_) {
@@ -12912,7 +13042,9 @@ app_ui_Toolbar.prototype = $extend(feathers_controls_ScrollContainer.prototype,{
 	,widthLabel: null
 	,panLock: null
 	,zoomLock: null
+	,zoomButton: null
 	,darkButton: null
+	,stabilizerButton: null
 	,updating: null
 	,swatch: function(color) {
 		var b = new feathers_controls_ToggleButton();
@@ -12952,6 +13084,12 @@ app_ui_Toolbar.prototype = $extend(feathers_controls_ScrollContainer.prototype,{
 		s.set_height(40);
 		return s;
 	}
+	,setZoom: function(zoom) {
+		var text = app_ui_ZoomMenu.label(zoom);
+		if(this.zoomButton.get_label() != text) {
+			this.zoomButton.set_label(text);
+		}
+	}
 	,refresh: function() {
 		this.updating = true;
 		this.penButton.set_isSelected(this.tools.tool == "pen");
@@ -12967,6 +13105,7 @@ app_ui_Toolbar.prototype = $extend(feathers_controls_ScrollContainer.prototype,{
 		this.slider.set_value(this.tools.get_width());
 		this.widthLabel.set_text(Std.string(Math.round(this.tools.get_width())));
 		this.panLock.set_isSelected(this.tools.panLock);
+		this.stabilizerButton.set_isSelected(this.tools.stabilizer);
 		this.zoomLock.set_isSelected(this.tools.zoomLock);
 		this.darkButton.set_isSelected(this.tools.darkMode);
 		this.updating = false;
@@ -13077,6 +13216,104 @@ app_ui_Ui.separator = function() {
 	q.set_touchable(false);
 	return q;
 };
+var app_ui_ZoomMenu = function(onSelect) {
+	this.isOpen = false;
+	this.items = [];
+	var _gthis = this;
+	starling_display_Sprite.call(this);
+	this.onSelect = onSelect;
+	this.set_visible(false);
+	this.blocker = new starling_display_Quad(10,10,0);
+	this.blocker.set_alpha(0);
+	this.blocker.addEventListener("touch",function(e) {
+		if(e.getTouch(_gthis.blocker,"ended") != null) {
+			_gthis.close();
+		}
+	});
+	this.addChild(this.blocker);
+	this.border = app_ui_Icons.roundSkin(1);
+	this.addChild(this.border);
+	this.panel = new feathers_controls_LayoutGroup();
+	var layout = new feathers_layout_VerticalLayout();
+	layout.set_padding(4);
+	layout.set_gap(1);
+	layout.set_horizontalAlign("justify");
+	this.panel.set_layout(layout);
+	this.panel.set_backgroundSkin(app_ui_Icons.roundSkin(7));
+	this.panel.set_width(96);
+	this.addChild(this.panel);
+	var _g = 0;
+	var _g1 = app_ui_ZoomMenu.LEVELS;
+	while(_g < _g1.length) {
+		var level = [_g1[_g]];
+		++_g;
+		var b = new feathers_controls_ToggleButton();
+		b.set_isToggle(false);
+		b.set_defaultSkin(app_ui_Icons.roundSkin(3,0));
+		b.setSkinForState("hover",app_ui_Icons.roundSkin(3));
+		b.setSkinForState("down",app_ui_Icons.roundSkin(4));
+		b.set_defaultSelectedSkin(app_ui_Icons.roundSkin(5));
+		b.set_label(app_ui_ZoomMenu.label(level[0]));
+		b.set_fontStyles(app_ui_Ui.format(14));
+		b.set_horizontalAlign("center");
+		b.set_height(34);
+		b.addEventListener("triggered",(function(level) {
+			return function(_) {
+				_gthis.close();
+				onSelect(level[0]);
+			};
+		})(level));
+		this.items.push(b);
+		this.panel.addChild(b);
+	}
+};
+$hxClasses["app.ui.ZoomMenu"] = app_ui_ZoomMenu;
+app_ui_ZoomMenu.__name__ = "app.ui.ZoomMenu";
+app_ui_ZoomMenu.label = function(zoom) {
+	return Math.round(zoom * 100) + "%";
+};
+app_ui_ZoomMenu.__super__ = starling_display_Sprite;
+app_ui_ZoomMenu.prototype = $extend(starling_display_Sprite.prototype,{
+	onSelect: null
+	,blocker: null
+	,panel: null
+	,border: null
+	,items: null
+	,isOpen: null
+	,open: function(anchor,zoom,stageWidth,stageHeight) {
+		this.blocker.set_width(stageWidth);
+		this.blocker.set_height(stageHeight);
+		var best = 0;
+		var _g = 0;
+		var _g1 = app_ui_ZoomMenu.LEVELS.length;
+		while(_g < _g1) {
+			var i = _g++;
+			if(Math.abs(app_ui_ZoomMenu.LEVELS[i] - zoom) < Math.abs(app_ui_ZoomMenu.LEVELS[best] - zoom)) {
+				best = i;
+			}
+		}
+		var _g = 0;
+		var _g1 = this.items.length;
+		while(_g < _g1) {
+			var i = _g++;
+			this.items[i].set_isSelected(i == best && Math.abs(app_ui_ZoomMenu.LEVELS[i] - zoom) < 0.005);
+		}
+		this.panel.validate();
+		this.panel.set_x(Math.max(4,Math.min(anchor.x + (anchor.width - this.panel.get_width()) / 2,stageWidth - this.panel.get_width() - 4)));
+		this.panel.set_y(anchor.y + anchor.height + 4);
+		this.border.set_x(this.panel.get_x() - 1);
+		this.border.set_y(this.panel.get_y() - 1);
+		this.border.set_width(this.panel.get_width() + 2);
+		this.border.set_height(this.panel.get_height() + 2);
+		this.isOpen = true;
+		this.set_visible(true);
+	}
+	,close: function() {
+		this.isOpen = false;
+		this.set_visible(false);
+	}
+	,__class__: app_ui_ZoomMenu
+});
 var feathers_compat_AS3 = function() { };
 $hxClasses["feathers.compat.AS3"] = feathers_compat_AS3;
 feathers_compat_AS3.__name__ = "feathers.compat.AS3";
@@ -66332,6 +66569,7 @@ feathers_controls_ScrollContainer.ALTERNATE_STYLE_NAME_TOOLBAR = "feathers-toolb
 app_ui_Toolbar.HEIGHT = 52;
 app_ui_Ui.BUTTON_SIZE = 40;
 app_ui_Ui.formats = [];
+app_ui_ZoomMenu.LEVELS = [0.5,0.75,1,1.5,2,3,4,6,8];
 feathers_compat_Capabilities.dpi = 72;
 feathers_compat_Capabilities.simulateDPad = false;
 feathers_compat_Capabilities.isTablet = false;
