@@ -1,7 +1,7 @@
 // Service worker: caches the whole app for offline use.
 // release.js fills in the version and the file list (the placeholders below).
-const CACHE = 'simple-pen-18fcf7741a31';
-const FILES = ['./', "README.md", "favicon.ico", "icons/apple-touch-icon.png", "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "index.html", "kha.abce8f2f3d69.js", "manifest.webmanifest"];
+const CACHE = 'simple-pen-ea99fffcb17c';
+const FILES = ['./', "README.md", "favicon.ico", "icons/apple-touch-icon.png", "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "index.html", "kha.f01a078af9a0.js", "manifest.webmanifest"];
 
 self.addEventListener('install', event => {
     event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)).then(() => self.skipWaiting()));

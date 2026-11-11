@@ -3161,6 +3161,8 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		this.cursor = new app_canvas_EraserCursor();
 		this.addChild(this.cursor);
 		this.tools.addEventListener("change",$bind(this,this.updateCursor));
+		this.applyCanvasDark();
+		this.tools.addEventListener("change",$bind(this,this.applyCanvasDark));
 		this.ui = new starling_display_Sprite();
 		this.addChild(this.ui);
 		this.toolbar = new app_ui_Toolbar(this.tools,{ exportPdf : $bind(this,this.exportPdf), openBinders : $bind(this,this.openBinders), openZoomMenu : $bind(this,this.openZoomMenu), openFolderMenu : app_store_FolderSync.isSupported() ? $bind(this,this.openFolderMenu) : null});
@@ -3467,6 +3469,10 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 			})(z)});
 		}
 		this.menu.open(items,anchor.getBounds(this.get_stage()),96,this.get_stage().get_stageWidth(),this.get_stage().get_stageHeight());
+	}
+	,applyCanvasDark: function() {
+		this.world.setDark(this.tools.darkMode);
+		this.cursor.setDark(this.tools.darkMode);
 	}
 	,updateFolderButton: function() {
 		this.toolbar.setFolderState(this.folder.state == 2,this.folder.state == 3);
@@ -3836,6 +3842,7 @@ app_canvas_Chunk.prototype = {
 };
 var app_canvas_ChunkManager = function(db,queue) {
 	this.ready = false;
+	this.dark = false;
 	this.keepMaxY = -1;
 	this.keepMaxX = -1;
 	this.keepMinY = 0;
@@ -3873,6 +3880,7 @@ app_canvas_ChunkManager.prototype = {
 	,keepMinY: null
 	,keepMaxX: null
 	,keepMaxY: null
+	,dark: null
 	,ready: null
 	,get_residentCount: function() {
 		var n = 0;
@@ -3975,6 +3983,22 @@ app_canvas_ChunkManager.prototype = {
 		});
 		starling_core_Starling.get_current().setRequiresRedraw();
 	}
+	,setDark: function(value) {
+		if(this.dark == value) {
+			return;
+		}
+		this.dark = value;
+		var h = this.chunks.h;
+		var c_h = h;
+		var c_keys = Object.keys(h);
+		var c_length = c_keys.length;
+		var c_current = 0;
+		while(c_current < c_length) {
+			var c = c_h[c_keys[c_current++]];
+			c.image.set_style(this.dark ? new app_canvas_InkSwapStyle() : new starling_styles_MeshStyle());
+		}
+		starling_core_Starling.get_current().setRequiresRedraw();
+	}
 	,setStyle: function(s) {
 		this.flushStamps();
 		this.style = s;
@@ -4032,6 +4056,9 @@ app_canvas_ChunkManager.prototype = {
 			return c;
 		}
 		c = new app_canvas_Chunk(cx,cy);
+		if(this.dark) {
+			c.image.set_style(new app_canvas_InkSwapStyle());
+		}
 		this.chunks.h[key] = c;
 		this.layer.addChild(c.image);
 		if(Object.prototype.hasOwnProperty.call(this.stored.h,key)) {
@@ -4282,6 +4309,22 @@ app_canvas_EraserCursor.prototype = $extend(starling_display_Sprite.prototype,{
 	halo: null
 	,ring: null
 	,diameter: null
+	,setDark: function(dark) {
+		var _g = 0;
+		var _g1 = this.halo;
+		while(_g < _g1.length) {
+			var q = _g1[_g];
+			++_g;
+			q.set_color(dark ? 0 : 16777215);
+		}
+		var _g = 0;
+		var _g1 = this.ring;
+		while(_g < _g1.length) {
+			var q = _g1[_g];
+			++_g;
+			q.set_color(dark ? 14540253 : 3355443);
+		}
+	}
 	,setDiameter: function(d) {
 		d = Math.max(4,d);
 		if(Math.abs(d - this.diameter) < 0.25) {
@@ -4296,6 +4339,598 @@ app_canvas_EraserCursor.prototype = $extend(starling_display_Sprite.prototype,{
 		this.set_y(y);
 	}
 	,__class__: app_canvas_EraserCursor
+});
+var starling_styles_MeshStyle = function() {
+	starling_events_EventDispatcher.call(this);
+	this._textureSmoothing = starling_core_Starling.get_currentDefaultTextureSmoothing();
+	this._textureRepeat = false;
+	this._type = js_Boot.getClass(this);
+};
+$hxClasses["starling.styles.MeshStyle"] = starling_styles_MeshStyle;
+starling_styles_MeshStyle.__name__ = "starling.styles.MeshStyle";
+starling_styles_MeshStyle.__properties__ = {get_VERTEX_FORMAT:"get_VERTEX_FORMAT"};
+starling_styles_MeshStyle.get_VERTEX_FORMAT = function() {
+	return starling_rendering_MeshEffect.get_VERTEX_FORMAT();
+};
+starling_styles_MeshStyle.__super__ = starling_events_EventDispatcher;
+starling_styles_MeshStyle.prototype = $extend(starling_events_EventDispatcher.prototype,{
+	_type: null
+	,_target: null
+	,_texture: null
+	,_textureSmoothing: null
+	,_textureRepeat: null
+	,_textureRoot: null
+	,_vertexData: null
+	,_indexData: null
+	,copyFrom: function(meshStyle) {
+		this._texture = meshStyle._texture;
+		this._textureRoot = meshStyle._textureRoot;
+		this._textureRepeat = meshStyle._textureRepeat;
+		this._textureSmoothing = meshStyle._textureSmoothing;
+	}
+	,clone: function() {
+		var clone = Type.createInstance(this._type,[]);
+		clone.copyFrom(this);
+		return clone;
+	}
+	,createEffect: function() {
+		return new starling_rendering_MeshEffect();
+	}
+	,updateEffect: function(effect,state) {
+		effect.set_texture(this._texture);
+		effect.set_textureRepeat(this._textureRepeat);
+		effect.set_textureSmoothing(this._textureSmoothing);
+		effect.set_mvpMatrix3D(state.get_mvpMatrix3D());
+		effect.set_alpha(state.get_alpha());
+		effect.set_tinted(this._vertexData.get_tinted());
+	}
+	,canBatchWith: function(meshStyle) {
+		if(this._type == meshStyle._type) {
+			var newTexture = meshStyle._texture;
+			if(this._texture == null && newTexture == null) {
+				return true;
+			} else if(this._texture != null && newTexture != null) {
+				if(this._textureRoot == meshStyle._textureRoot && this._textureSmoothing == meshStyle._textureSmoothing) {
+					return this._textureRepeat == meshStyle._textureRepeat;
+				} else {
+					return false;
+				}
+			} else {
+				return false;
+			}
+		} else {
+			return false;
+		}
+	}
+	,batchVertexData: function(targetStyle,targetVertexID,matrix,vertexID,numVertices) {
+		if(numVertices == null) {
+			numVertices = -1;
+		}
+		if(vertexID == null) {
+			vertexID = 0;
+		}
+		if(targetVertexID == null) {
+			targetVertexID = 0;
+		}
+		this._vertexData.copyTo(targetStyle._vertexData,targetVertexID,matrix,vertexID,numVertices);
+	}
+	,batchIndexData: function(targetStyle,targetIndexID,offset,indexID,numIndices) {
+		if(numIndices == null) {
+			numIndices = -1;
+		}
+		if(indexID == null) {
+			indexID = 0;
+		}
+		if(offset == null) {
+			offset = 0;
+		}
+		if(targetIndexID == null) {
+			targetIndexID = 0;
+		}
+		this._indexData.copyTo(targetStyle._indexData,targetIndexID,offset,indexID,numIndices);
+	}
+	,setRequiresRedraw: function() {
+		if(this._target != null) {
+			this._target.setRequiresRedraw();
+		}
+	}
+	,setVertexDataChanged: function() {
+		if(this._target != null) {
+			this._target.setVertexDataChanged();
+		}
+	}
+	,setIndexDataChanged: function() {
+		if(this._target != null) {
+			this._target.setIndexDataChanged();
+		}
+	}
+	,onTargetAssigned: function(target) {
+	}
+	,addEventListener: function(type,listener) {
+		if(type == "enterFrame" && this._target != null) {
+			this._target.addEventListener("enterFrame",$bind(this,this.onEnterFrame));
+		}
+		starling_events_EventDispatcher.prototype.addEventListener.call(this,type,listener);
+	}
+	,removeEventListener: function(type,listener) {
+		if(type == "enterFrame" && this._target != null) {
+			this._target.removeEventListener(type,$bind(this,this.onEnterFrame));
+		}
+		starling_events_EventDispatcher.prototype.removeEventListener.call(this,type,listener);
+	}
+	,onEnterFrame: function(event) {
+		this.dispatchEvent(event);
+	}
+	,setTarget: function(target,vertexData,indexData) {
+		if(this._target != target) {
+			if(this._target != null) {
+				this._target.removeEventListener("enterFrame",$bind(this,this.onEnterFrame));
+			}
+			if(vertexData != null) {
+				vertexData.set_format(this.get_vertexFormat());
+			}
+			this._target = target;
+			this._vertexData = vertexData;
+			this._indexData = indexData;
+			if(target != null) {
+				if(this.hasEventListener("enterFrame")) {
+					target.addEventListener("enterFrame",$bind(this,this.onEnterFrame));
+				}
+				this.onTargetAssigned(target);
+			}
+		}
+	}
+	,getVertexPosition: function(vertexID,out) {
+		return this._vertexData.getPoint(vertexID,"position",out);
+	}
+	,setVertexPosition: function(vertexID,x,y) {
+		this._vertexData.setPoint(vertexID,"position",x,y);
+		this.setVertexDataChanged();
+	}
+	,getVertexAlpha: function(vertexID) {
+		return this._vertexData.getAlpha(vertexID);
+	}
+	,setVertexAlpha: function(vertexID,alpha) {
+		this._vertexData.setAlpha(vertexID,"color",alpha);
+		this.setVertexDataChanged();
+	}
+	,getVertexColor: function(vertexID) {
+		return this._vertexData.getColor(vertexID);
+	}
+	,setVertexColor: function(vertexID,color) {
+		this._vertexData.setColor(vertexID,"color",color);
+		this.setVertexDataChanged();
+	}
+	,getTexCoords: function(vertexID,out) {
+		if(this._texture != null) {
+			return this._texture.getTexCoords(this._vertexData,vertexID,"texCoords",out);
+		} else {
+			return this._vertexData.getPoint(vertexID,"texCoords",out);
+		}
+	}
+	,setTexCoords: function(vertexID,u,v) {
+		if(this._texture != null) {
+			this._texture.setTexCoords(this._vertexData,vertexID,"texCoords",u,v);
+		} else {
+			this._vertexData.setPoint(vertexID,"texCoords",u,v);
+		}
+		this.setVertexDataChanged();
+	}
+	,get_vertexData: function() {
+		return this._vertexData;
+	}
+	,get_indexData: function() {
+		return this._indexData;
+	}
+	,get_type: function() {
+		return this._type;
+	}
+	,get_color: function() {
+		if(this._vertexData.get_numVertices() > 0) {
+			return this._vertexData.getColor(0);
+		} else {
+			return 0;
+		}
+	}
+	,set_color: function(value) {
+		var numVertices = this._vertexData.get_numVertices();
+		var _g = 0;
+		var _g1 = numVertices;
+		while(_g < _g1) {
+			var i = _g++;
+			this._vertexData.setColor(i,"color",value);
+		}
+		if(value == 16777215 && this._vertexData.get_tinted()) {
+			this._vertexData.updateTinted();
+		}
+		this.setVertexDataChanged();
+		return value;
+	}
+	,get_vertexFormat: function() {
+		return starling_styles_MeshStyle.get_VERTEX_FORMAT();
+	}
+	,get_texture: function() {
+		return this._texture;
+	}
+	,set_texture: function(value) {
+		if(value != this._texture) {
+			if(value != null) {
+				var numVertices = this._vertexData != null ? this._vertexData.get_numVertices() : 0;
+				var _g = 0;
+				var _g1 = numVertices;
+				while(_g < _g1) {
+					var i = _g++;
+					this.getTexCoords(i,starling_styles_MeshStyle.sPoint);
+					value.setTexCoords(this._vertexData,i,"texCoords",starling_styles_MeshStyle.sPoint.x,starling_styles_MeshStyle.sPoint.y);
+				}
+				this.setVertexDataChanged();
+			} else {
+				this.setRequiresRedraw();
+			}
+			this._texture = value;
+			this._textureRoot = value != null ? value.get_root() : null;
+		}
+		return value;
+	}
+	,get_textureSmoothing: function() {
+		return this._textureSmoothing;
+	}
+	,set_textureSmoothing: function(value) {
+		if(value != this._textureSmoothing) {
+			this._textureSmoothing = value;
+			this.setRequiresRedraw();
+		}
+		return value;
+	}
+	,get_textureRepeat: function() {
+		return this._textureRepeat;
+	}
+	,set_textureRepeat: function(value) {
+		return this._textureRepeat = value;
+	}
+	,get_target: function() {
+		return this._target;
+	}
+	,__class__: starling_styles_MeshStyle
+	,__properties__: {get_indexData:"get_indexData",get_vertexData:"get_vertexData",get_target:"get_target",set_textureRepeat:"set_textureRepeat",get_textureRepeat:"get_textureRepeat",set_textureSmoothing:"set_textureSmoothing",get_textureSmoothing:"get_textureSmoothing",set_texture:"set_texture",get_texture:"get_texture",get_vertexFormat:"get_vertexFormat",set_color:"set_color",get_color:"get_color",get_type:"get_type"}
+});
+var app_canvas_InkSwapStyle = function() {
+	starling_styles_MeshStyle.call(this);
+};
+$hxClasses["app.canvas.InkSwapStyle"] = app_canvas_InkSwapStyle;
+app_canvas_InkSwapStyle.__name__ = "app.canvas.InkSwapStyle";
+app_canvas_InkSwapStyle.__super__ = starling_styles_MeshStyle;
+app_canvas_InkSwapStyle.prototype = $extend(starling_styles_MeshStyle.prototype,{
+	createEffect: function() {
+		return new app_canvas__$InkSwapStyle_InkSwapEffect();
+	}
+	,__class__: app_canvas_InkSwapStyle
+});
+var starling_rendering_Effect = function() {
+	this._mvpMatrix3D = new starling_geom_Matrix3D();
+	var c = js_Boot.getClass(this);
+	this._programBaseName = c.__name__;
+	this._vertexBufferSize = 0;
+	this._indexBufferSize = 0;
+	this._indexBufferUsesQuadLayout = false;
+};
+$hxClasses["starling.rendering.Effect"] = starling_rendering_Effect;
+starling_rendering_Effect.__name__ = "starling.rendering.Effect";
+starling_rendering_Effect.__properties__ = {get_VERTEX_FORMAT:"get_VERTEX_FORMAT"};
+starling_rendering_Effect.get_VERTEX_FORMAT = function() {
+	return starling_rendering_VertexDataFormat.fromString("position:float2");
+};
+starling_rendering_Effect.prototype = {
+	_vertexBuffer: null
+	,_vertexBufferSize: null
+	,_vertexBufferFormat: null
+	,_indexBuffer: null
+	,_indexBufferSize: null
+	,_indexBufferUsesQuadLayout: null
+	,_mvpMatrix3D: null
+	,_onRestore: null
+	,_programBaseName: null
+	,dispose: function() {
+		this.purgeBuffers();
+	}
+	,purgeBuffers: function(vertexBuffer,indexBuffer) {
+		if(indexBuffer == null) {
+			indexBuffer = true;
+		}
+		if(vertexBuffer == null) {
+			vertexBuffer = true;
+		}
+		if(this._vertexBuffer != null && vertexBuffer) {
+			this._vertexBuffer.delete();
+			this._vertexBuffer = null;
+			this._vertexBufferSize = 0;
+		}
+		if(this._indexBuffer != null && indexBuffer) {
+			this._indexBuffer.delete();
+			this._indexBuffer = null;
+			this._indexBufferSize = 0;
+		}
+	}
+	,uploadIndexData: function(indexData,bufferUsage) {
+		if(bufferUsage == null) {
+			bufferUsage = 0;
+		}
+		var numIndices = indexData.get_numIndices();
+		var isQuadLayout = indexData.get_useQuadLayout();
+		var wasQuadLayout = this._indexBufferUsesQuadLayout;
+		if(this._indexBuffer != null) {
+			if(numIndices <= this._indexBufferSize) {
+				if(!isQuadLayout || !wasQuadLayout) {
+					indexData.uploadToIndexBuffer(this._indexBuffer);
+					this._indexBufferUsesQuadLayout = isQuadLayout && numIndices == this._indexBufferSize;
+				}
+			} else {
+				this.purgeBuffers(false,true);
+			}
+		}
+		if(this._indexBuffer == null && numIndices > 0) {
+			this._indexBuffer = indexData.createIndexBuffer(true,bufferUsage);
+			this._indexBufferSize = numIndices;
+			this._indexBufferUsesQuadLayout = isQuadLayout;
+		}
+	}
+	,uploadVertexData: function(vertexData,bufferUsage) {
+		if(bufferUsage == null) {
+			bufferUsage = 0;
+		}
+		if(this._vertexBuffer != null) {
+			if(vertexData.get_numVertices() <= this._vertexBufferSize && vertexData.get_format() == this._vertexBufferFormat) {
+				vertexData.uploadToVertexBuffer(this._vertexBuffer);
+			} else {
+				this.purgeBuffers(true,false);
+			}
+		}
+		if(this._vertexBuffer == null && vertexData.get_numVertices() > 0) {
+			this._vertexBuffer = vertexData.createVertexBuffer(true,bufferUsage);
+			this._vertexBufferSize = vertexData.get_numVertices();
+			this._vertexBufferFormat = vertexData.get_format();
+		}
+	}
+	,render: function(firstIndex,numTriangles) {
+		if(numTriangles == null) {
+			numTriangles = -1;
+		}
+		if(firstIndex == null) {
+			firstIndex = 0;
+		}
+		if(numTriangles < 0) {
+			numTriangles = this._indexBufferSize / 3 | 0;
+		}
+		if(numTriangles == 0 || this._vertexBuffer == null || this._indexBuffer == null) {
+			return;
+		}
+		var context = starling_core_Starling.get_currentContext();
+		if(context == null) {
+			throw new starling_errors_MissingContextError();
+		}
+		this.beforeDraw(context);
+		context.drawTriangles(this._vertexBuffer,this._indexBuffer,firstIndex,numTriangles);
+		this.afterDraw(context);
+	}
+	,beforeDraw: function(context) {
+		this.get_program().activate(context);
+		context.setMvpMatrix("mvpMatrix",this.get_mvpMatrix3D());
+	}
+	,afterDraw: function(context) {
+	}
+	,createProgram: function() {
+		return new starling_rendering_Program(kha_Shaders.starling_position_vert,kha_Shaders.starling_white_frag,this.get_vertexFormat());
+	}
+	,get_programVariantName: function() {
+		return 0;
+	}
+	,get_programBaseName: function() {
+		return this._programBaseName;
+	}
+	,set_programBaseName: function(value) {
+		return this._programBaseName = value;
+	}
+	,get_programName: function() {
+		var baseName = this.get_programBaseName();
+		var variantName = this.get_programVariantName();
+		var nameCache = starling_rendering_Effect.sProgramNameCache.h[baseName];
+		if(nameCache == null) {
+			nameCache = new haxe_ds_IntMap();
+			starling_rendering_Effect.sProgramNameCache.h[baseName] = nameCache;
+		}
+		var name = nameCache.h[variantName];
+		if(name == null) {
+			if(variantName != 0) {
+				name = baseName + "#" + StringTools.hex(variantName);
+			} else {
+				name = baseName;
+			}
+			nameCache.h[variantName] = name;
+		}
+		return name;
+	}
+	,get_program: function() {
+		var name = this.get_programName();
+		var painter = starling_core_Starling.get_currentPainter();
+		var program = painter.getProgram(name);
+		if(program == null) {
+			program = this.createProgram();
+			painter.registerProgram(name,program);
+		}
+		return program;
+	}
+	,get_onRestore: function() {
+		return this._onRestore;
+	}
+	,set_onRestore: function(value) {
+		return this._onRestore = value;
+	}
+	,get_vertexFormat: function() {
+		return starling_rendering_Effect.get_VERTEX_FORMAT();
+	}
+	,get_mvpMatrix3D: function() {
+		return this._mvpMatrix3D;
+	}
+	,set_mvpMatrix3D: function(value) {
+		this._mvpMatrix3D.copyFrom(value);
+		return value;
+	}
+	,get_indexBuffer: function() {
+		return this._indexBuffer;
+	}
+	,get_indexBufferSize: function() {
+		return this._indexBufferSize;
+	}
+	,get_vertexBuffer: function() {
+		return this._vertexBuffer;
+	}
+	,get_vertexBufferSize: function() {
+		return this._vertexBufferSize;
+	}
+	,__class__: starling_rendering_Effect
+	,__properties__: {get_vertexBufferSize:"get_vertexBufferSize",get_vertexBuffer:"get_vertexBuffer",get_indexBufferSize:"get_indexBufferSize",get_indexBuffer:"get_indexBuffer",get_program:"get_program",get_programName:"get_programName",get_programVariantName:"get_programVariantName",set_programBaseName:"set_programBaseName",get_programBaseName:"get_programBaseName",set_mvpMatrix3D:"set_mvpMatrix3D",get_mvpMatrix3D:"get_mvpMatrix3D",get_vertexFormat:"get_vertexFormat",set_onRestore:"set_onRestore",get_onRestore:"get_onRestore"}
+};
+var starling_rendering_FilterEffect = function() {
+	starling_rendering_Effect.call(this);
+	this._textureSmoothing = starling_core_Starling.get_currentDefaultTextureSmoothing();
+	this._textureRepeat = false;
+};
+$hxClasses["starling.rendering.FilterEffect"] = starling_rendering_FilterEffect;
+starling_rendering_FilterEffect.__name__ = "starling.rendering.FilterEffect";
+starling_rendering_FilterEffect.__properties__ = {get_VERTEX_FORMAT:"get_VERTEX_FORMAT"};
+starling_rendering_FilterEffect.get_VERTEX_FORMAT = function() {
+	return starling_rendering_VertexDataFormat.fromString("position:float2, texCoords:float2");
+};
+starling_rendering_FilterEffect.__super__ = starling_rendering_Effect;
+starling_rendering_FilterEffect.prototype = $extend(starling_rendering_Effect.prototype,{
+	_texture: null
+	,_textureSmoothing: null
+	,_textureRepeat: null
+	,get_programVariantName: function() {
+		if(this._texture != null) {
+			return 1;
+		} else {
+			return 0;
+		}
+	}
+	,createProgram: function() {
+		if(this._texture != null) {
+			return new starling_rendering_Program(kha_Shaders.starling_filter_vert,kha_Shaders.starling_texture_frag,this.get_vertexFormat());
+		} else {
+			return starling_rendering_Effect.prototype.createProgram.call(this);
+		}
+	}
+	,beforeDraw: function(context) {
+		starling_rendering_Effect.prototype.beforeDraw.call(this,context);
+		if(this._texture != null) {
+			this.setSamplerTexture(context,"tex",this._texture,this._textureSmoothing,this._textureRepeat);
+		}
+	}
+	,setSamplerTexture: function(context,samplerName,texture,smoothing,repeat) {
+		if(repeat == null) {
+			repeat = false;
+		}
+		var root = texture.get_root();
+		var canRepeat = repeat && (root.get_isPotTexture() || kha_Image.get_nonPow2Supported());
+		context.setTexture(samplerName,texture.get_base(),smoothing,texture.get_mipMapping(),canRepeat);
+	}
+	,get_vertexFormat: function() {
+		return starling_rendering_FilterEffect.get_VERTEX_FORMAT();
+	}
+	,get_texture: function() {
+		return this._texture;
+	}
+	,set_texture: function(value) {
+		return this._texture = value;
+	}
+	,get_textureSmoothing: function() {
+		return this._textureSmoothing;
+	}
+	,set_textureSmoothing: function(value) {
+		return this._textureSmoothing = value;
+	}
+	,get_textureRepeat: function() {
+		return this._textureRepeat;
+	}
+	,set_textureRepeat: function(value) {
+		return this._textureRepeat = value;
+	}
+	,__class__: starling_rendering_FilterEffect
+	,__properties__: $extend(starling_rendering_Effect.prototype.__properties__,{set_textureRepeat:"set_textureRepeat",get_textureRepeat:"get_textureRepeat",set_textureSmoothing:"set_textureSmoothing",get_textureSmoothing:"get_textureSmoothing",set_texture:"set_texture",get_texture:"get_texture"})
+});
+var starling_rendering_MeshEffect = function() {
+	starling_rendering_FilterEffect.call(this);
+	this._alpha = 1.0;
+	this._tinted = false;
+	this._optimizeIfNotTinted = js_Boot.getClass(this) == starling_rendering_MeshEffect;
+};
+$hxClasses["starling.rendering.MeshEffect"] = starling_rendering_MeshEffect;
+starling_rendering_MeshEffect.__name__ = "starling.rendering.MeshEffect";
+starling_rendering_MeshEffect.__properties__ = {get_VERTEX_FORMAT:"get_VERTEX_FORMAT"};
+starling_rendering_MeshEffect.get_VERTEX_FORMAT = function() {
+	return starling_rendering_VertexDataFormat.fromString("position:float2, texCoords:float2, color:bytes4");
+};
+starling_rendering_MeshEffect.__super__ = starling_rendering_FilterEffect;
+starling_rendering_MeshEffect.prototype = $extend(starling_rendering_FilterEffect.prototype,{
+	_alpha: null
+	,_tinted: null
+	,_optimizeIfNotTinted: null
+	,get_programVariantName: function() {
+		var noTinting = this._optimizeIfNotTinted && !this._tinted && this._alpha == 1.0 ? 1 : 0;
+		return starling_rendering_FilterEffect.prototype.get_programVariantName.call(this) | noTinting << 3;
+	}
+	,createProgram: function() {
+		if(this.get_texture() != null) {
+			if(this._optimizeIfNotTinted && !this._tinted && this._alpha == 1.0) {
+				return starling_rendering_FilterEffect.prototype.createProgram.call(this);
+			}
+			return new starling_rendering_Program(kha_Shaders.starling_mesh_textured_vert,kha_Shaders.starling_mesh_textured_frag,this.get_vertexFormat());
+		} else {
+			return new starling_rendering_Program(kha_Shaders.starling_mesh_vert,kha_Shaders.starling_mesh_frag,this.get_vertexFormat());
+		}
+	}
+	,beforeDraw: function(context) {
+		starling_rendering_FilterEffect.prototype.beforeDraw.call(this,context);
+		if(this._tinted || this._alpha != 1.0 || !this._optimizeIfNotTinted || this.get_texture() == null) {
+			context.setFloat4("alpha",this._alpha,this._alpha,this._alpha,this._alpha);
+		}
+	}
+	,get_vertexFormat: function() {
+		return starling_rendering_MeshEffect.get_VERTEX_FORMAT();
+	}
+	,get_alpha: function() {
+		return this._alpha;
+	}
+	,set_alpha: function(value) {
+		return this._alpha = value;
+	}
+	,get_tinted: function() {
+		return this._tinted;
+	}
+	,set_tinted: function(value) {
+		return this._tinted = value;
+	}
+	,__class__: starling_rendering_MeshEffect
+	,__properties__: $extend(starling_rendering_FilterEffect.prototype.__properties__,{set_tinted:"set_tinted",get_tinted:"get_tinted",set_alpha:"set_alpha",get_alpha:"get_alpha"})
+});
+var app_canvas__$InkSwapStyle_InkSwapEffect = function() {
+	starling_rendering_MeshEffect.call(this);
+};
+$hxClasses["app.canvas._InkSwapStyle.InkSwapEffect"] = app_canvas__$InkSwapStyle_InkSwapEffect;
+app_canvas__$InkSwapStyle_InkSwapEffect.__name__ = "app.canvas._InkSwapStyle.InkSwapEffect";
+app_canvas__$InkSwapStyle_InkSwapEffect.__super__ = starling_rendering_MeshEffect;
+app_canvas__$InkSwapStyle_InkSwapEffect.prototype = $extend(starling_rendering_MeshEffect.prototype,{
+	createProgram: function() {
+		if(this.get_texture() == null) {
+			return starling_rendering_MeshEffect.prototype.createProgram.call(this);
+		}
+		return new starling_rendering_Program(kha_Shaders.starling_mesh_textured_vert,kha_Shaders.ink_swap_frag,this.get_vertexFormat());
+	}
+	,beforeDraw: function(context) {
+		starling_rendering_MeshEffect.prototype.beforeDraw.call(this,context);
+		context.setFloat4("alpha",this.get_alpha(),this.get_alpha(),this.get_alpha(),this.get_alpha());
+	}
+	,__class__: app_canvas__$InkSwapStyle_InkSwapEffect
 });
 var app_canvas_PixelIO = function() { };
 $hxClasses["app.canvas.PixelIO"] = app_canvas_PixelIO;
@@ -4429,6 +5064,10 @@ app_canvas_WorldView.prototype = $extend(starling_display_Sprite.prototype,{
 	,lastMaxX: null
 	,lastMaxY: null
 	,rangeDirty: null
+	,setDark: function(dark) {
+		this.background.set_color(dark ? 1184274 : 16777215);
+		this.chunks.setDark(dark);
+	}
 	,resize: function(width,height,devicePixelRatio) {
 		this.screenWidth = width;
 		this.screenHeight = height;
@@ -13856,6 +14495,12 @@ app_ui_Toolbar.prototype = $extend(feathers_controls_ScrollContainer.prototype,{
 		var ring = app_ui_Theme.tint(new starling_display_Image(app_ui_Icons.circle(24,true)),9);
 		var fill = new starling_display_Image(app_ui_Icons.circle(18));
 		fill.set_color(color);
+		if(color == 0) {
+			fill.set_color(app_ui_Theme.dark ? 15658734 : 0);
+			app_ui_Theme.onChange(function() {
+				fill.set_color(app_ui_Theme.dark ? 15658734 : 0);
+			});
+		}
 		fill.set_x(fill.set_y(3));
 		icon.addChild(ring);
 		icon.addChild(fill);
@@ -32302,6 +32947,17 @@ var kha_Shaders = function() { };
 $hxClasses["kha.Shaders"] = kha_Shaders;
 kha_Shaders.__name__ = "kha.Shaders";
 kha_Shaders.init = function() {
+	var blobs = [];
+	var data = Reflect.field(kha_Shaders,"ink_swap_fragData" + 0);
+	var bytes = haxe_Unserializer.run(data);
+	blobs.push(kha_internal_BytesBlob.fromBytes(bytes));
+	var data = Reflect.field(kha_Shaders,"ink_swap_fragData" + 1);
+	var bytes = haxe_Unserializer.run(data);
+	blobs.push(kha_internal_BytesBlob.fromBytes(bytes));
+	var data = Reflect.field(kha_Shaders,"ink_swap_fragData" + 2);
+	var bytes = haxe_Unserializer.run(data);
+	blobs.push(kha_internal_BytesBlob.fromBytes(bytes));
+	kha_Shaders.ink_swap_frag = new kha_graphics4_FragmentShader(blobs,["ink_swap.frag.essl","ink_swap-webgl2.frag.essl","ink_swap-relaxed.frag.essl"]);
 	var blobs = [];
 	var data = Reflect.field(kha_Shaders,"painter_colored_fragData" + 0);
 	var bytes = haxe_Unserializer.run(data);
@@ -54623,260 +55279,6 @@ starling_display_BlendMode.prototype = {
 	,__class__: starling_display_BlendMode
 	,__properties__: {get_name:"get_name",get_destinationFactor:"get_destinationFactor",get_sourceFactor:"get_sourceFactor"}
 };
-var starling_styles_MeshStyle = function() {
-	starling_events_EventDispatcher.call(this);
-	this._textureSmoothing = starling_core_Starling.get_currentDefaultTextureSmoothing();
-	this._textureRepeat = false;
-	this._type = js_Boot.getClass(this);
-};
-$hxClasses["starling.styles.MeshStyle"] = starling_styles_MeshStyle;
-starling_styles_MeshStyle.__name__ = "starling.styles.MeshStyle";
-starling_styles_MeshStyle.__properties__ = {get_VERTEX_FORMAT:"get_VERTEX_FORMAT"};
-starling_styles_MeshStyle.get_VERTEX_FORMAT = function() {
-	return starling_rendering_MeshEffect.get_VERTEX_FORMAT();
-};
-starling_styles_MeshStyle.__super__ = starling_events_EventDispatcher;
-starling_styles_MeshStyle.prototype = $extend(starling_events_EventDispatcher.prototype,{
-	_type: null
-	,_target: null
-	,_texture: null
-	,_textureSmoothing: null
-	,_textureRepeat: null
-	,_textureRoot: null
-	,_vertexData: null
-	,_indexData: null
-	,copyFrom: function(meshStyle) {
-		this._texture = meshStyle._texture;
-		this._textureRoot = meshStyle._textureRoot;
-		this._textureRepeat = meshStyle._textureRepeat;
-		this._textureSmoothing = meshStyle._textureSmoothing;
-	}
-	,clone: function() {
-		var clone = Type.createInstance(this._type,[]);
-		clone.copyFrom(this);
-		return clone;
-	}
-	,createEffect: function() {
-		return new starling_rendering_MeshEffect();
-	}
-	,updateEffect: function(effect,state) {
-		effect.set_texture(this._texture);
-		effect.set_textureRepeat(this._textureRepeat);
-		effect.set_textureSmoothing(this._textureSmoothing);
-		effect.set_mvpMatrix3D(state.get_mvpMatrix3D());
-		effect.set_alpha(state.get_alpha());
-		effect.set_tinted(this._vertexData.get_tinted());
-	}
-	,canBatchWith: function(meshStyle) {
-		if(this._type == meshStyle._type) {
-			var newTexture = meshStyle._texture;
-			if(this._texture == null && newTexture == null) {
-				return true;
-			} else if(this._texture != null && newTexture != null) {
-				if(this._textureRoot == meshStyle._textureRoot && this._textureSmoothing == meshStyle._textureSmoothing) {
-					return this._textureRepeat == meshStyle._textureRepeat;
-				} else {
-					return false;
-				}
-			} else {
-				return false;
-			}
-		} else {
-			return false;
-		}
-	}
-	,batchVertexData: function(targetStyle,targetVertexID,matrix,vertexID,numVertices) {
-		if(numVertices == null) {
-			numVertices = -1;
-		}
-		if(vertexID == null) {
-			vertexID = 0;
-		}
-		if(targetVertexID == null) {
-			targetVertexID = 0;
-		}
-		this._vertexData.copyTo(targetStyle._vertexData,targetVertexID,matrix,vertexID,numVertices);
-	}
-	,batchIndexData: function(targetStyle,targetIndexID,offset,indexID,numIndices) {
-		if(numIndices == null) {
-			numIndices = -1;
-		}
-		if(indexID == null) {
-			indexID = 0;
-		}
-		if(offset == null) {
-			offset = 0;
-		}
-		if(targetIndexID == null) {
-			targetIndexID = 0;
-		}
-		this._indexData.copyTo(targetStyle._indexData,targetIndexID,offset,indexID,numIndices);
-	}
-	,setRequiresRedraw: function() {
-		if(this._target != null) {
-			this._target.setRequiresRedraw();
-		}
-	}
-	,setVertexDataChanged: function() {
-		if(this._target != null) {
-			this._target.setVertexDataChanged();
-		}
-	}
-	,setIndexDataChanged: function() {
-		if(this._target != null) {
-			this._target.setIndexDataChanged();
-		}
-	}
-	,onTargetAssigned: function(target) {
-	}
-	,addEventListener: function(type,listener) {
-		if(type == "enterFrame" && this._target != null) {
-			this._target.addEventListener("enterFrame",$bind(this,this.onEnterFrame));
-		}
-		starling_events_EventDispatcher.prototype.addEventListener.call(this,type,listener);
-	}
-	,removeEventListener: function(type,listener) {
-		if(type == "enterFrame" && this._target != null) {
-			this._target.removeEventListener(type,$bind(this,this.onEnterFrame));
-		}
-		starling_events_EventDispatcher.prototype.removeEventListener.call(this,type,listener);
-	}
-	,onEnterFrame: function(event) {
-		this.dispatchEvent(event);
-	}
-	,setTarget: function(target,vertexData,indexData) {
-		if(this._target != target) {
-			if(this._target != null) {
-				this._target.removeEventListener("enterFrame",$bind(this,this.onEnterFrame));
-			}
-			if(vertexData != null) {
-				vertexData.set_format(this.get_vertexFormat());
-			}
-			this._target = target;
-			this._vertexData = vertexData;
-			this._indexData = indexData;
-			if(target != null) {
-				if(this.hasEventListener("enterFrame")) {
-					target.addEventListener("enterFrame",$bind(this,this.onEnterFrame));
-				}
-				this.onTargetAssigned(target);
-			}
-		}
-	}
-	,getVertexPosition: function(vertexID,out) {
-		return this._vertexData.getPoint(vertexID,"position",out);
-	}
-	,setVertexPosition: function(vertexID,x,y) {
-		this._vertexData.setPoint(vertexID,"position",x,y);
-		this.setVertexDataChanged();
-	}
-	,getVertexAlpha: function(vertexID) {
-		return this._vertexData.getAlpha(vertexID);
-	}
-	,setVertexAlpha: function(vertexID,alpha) {
-		this._vertexData.setAlpha(vertexID,"color",alpha);
-		this.setVertexDataChanged();
-	}
-	,getVertexColor: function(vertexID) {
-		return this._vertexData.getColor(vertexID);
-	}
-	,setVertexColor: function(vertexID,color) {
-		this._vertexData.setColor(vertexID,"color",color);
-		this.setVertexDataChanged();
-	}
-	,getTexCoords: function(vertexID,out) {
-		if(this._texture != null) {
-			return this._texture.getTexCoords(this._vertexData,vertexID,"texCoords",out);
-		} else {
-			return this._vertexData.getPoint(vertexID,"texCoords",out);
-		}
-	}
-	,setTexCoords: function(vertexID,u,v) {
-		if(this._texture != null) {
-			this._texture.setTexCoords(this._vertexData,vertexID,"texCoords",u,v);
-		} else {
-			this._vertexData.setPoint(vertexID,"texCoords",u,v);
-		}
-		this.setVertexDataChanged();
-	}
-	,get_vertexData: function() {
-		return this._vertexData;
-	}
-	,get_indexData: function() {
-		return this._indexData;
-	}
-	,get_type: function() {
-		return this._type;
-	}
-	,get_color: function() {
-		if(this._vertexData.get_numVertices() > 0) {
-			return this._vertexData.getColor(0);
-		} else {
-			return 0;
-		}
-	}
-	,set_color: function(value) {
-		var numVertices = this._vertexData.get_numVertices();
-		var _g = 0;
-		var _g1 = numVertices;
-		while(_g < _g1) {
-			var i = _g++;
-			this._vertexData.setColor(i,"color",value);
-		}
-		if(value == 16777215 && this._vertexData.get_tinted()) {
-			this._vertexData.updateTinted();
-		}
-		this.setVertexDataChanged();
-		return value;
-	}
-	,get_vertexFormat: function() {
-		return starling_styles_MeshStyle.get_VERTEX_FORMAT();
-	}
-	,get_texture: function() {
-		return this._texture;
-	}
-	,set_texture: function(value) {
-		if(value != this._texture) {
-			if(value != null) {
-				var numVertices = this._vertexData != null ? this._vertexData.get_numVertices() : 0;
-				var _g = 0;
-				var _g1 = numVertices;
-				while(_g < _g1) {
-					var i = _g++;
-					this.getTexCoords(i,starling_styles_MeshStyle.sPoint);
-					value.setTexCoords(this._vertexData,i,"texCoords",starling_styles_MeshStyle.sPoint.x,starling_styles_MeshStyle.sPoint.y);
-				}
-				this.setVertexDataChanged();
-			} else {
-				this.setRequiresRedraw();
-			}
-			this._texture = value;
-			this._textureRoot = value != null ? value.get_root() : null;
-		}
-		return value;
-	}
-	,get_textureSmoothing: function() {
-		return this._textureSmoothing;
-	}
-	,set_textureSmoothing: function(value) {
-		if(value != this._textureSmoothing) {
-			this._textureSmoothing = value;
-			this.setRequiresRedraw();
-		}
-		return value;
-	}
-	,get_textureRepeat: function() {
-		return this._textureRepeat;
-	}
-	,set_textureRepeat: function(value) {
-		return this._textureRepeat = value;
-	}
-	,get_target: function() {
-		return this._target;
-	}
-	,__class__: starling_styles_MeshStyle
-	,__properties__: {get_indexData:"get_indexData",get_vertexData:"get_vertexData",get_target:"get_target",set_textureRepeat:"set_textureRepeat",get_textureRepeat:"get_textureRepeat",set_textureSmoothing:"set_textureSmoothing",get_textureSmoothing:"get_textureSmoothing",set_texture:"set_texture",get_texture:"get_texture",get_vertexFormat:"get_vertexFormat",set_color:"set_color",get_color:"get_color",get_type:"get_type"}
-});
 var starling_display_Mesh = function(vertexData,indexData,style) {
 	starling_display_DisplayObject.call(this);
 	if(vertexData == null) {
@@ -59229,258 +59631,6 @@ starling_rendering_Context3D.prototype = {
 	,__class__: starling_rendering_Context3D
 	,__properties__: {get_inFrame:"get_inFrame",get_graphics:"get_graphics",get_backBufferHeight:"get_backBufferHeight",get_backBufferWidth:"get_backBufferWidth",get_flipY:"get_flipY",get_renderTarget:"get_renderTarget",get_depthStencilAvailable:"get_depthStencilAvailable",get_colorMask:"get_colorMask",get_stencilActionOnFail:"get_stencilActionOnFail",get_stencilActionOnDepthFail:"get_stencilActionOnDepthFail",get_stencilActionOnBothPass:"get_stencilActionOnBothPass",get_stencilCompareMode:"get_stencilCompareMode",get_depthCompareMode:"get_depthCompareMode",get_depthMask:"get_depthMask",get_cullMode:"get_cullMode",get_blendDestination:"get_blendDestination",get_blendSource:"get_blendSource"}
 };
-var starling_rendering_Effect = function() {
-	this._mvpMatrix3D = new starling_geom_Matrix3D();
-	var c = js_Boot.getClass(this);
-	this._programBaseName = c.__name__;
-	this._vertexBufferSize = 0;
-	this._indexBufferSize = 0;
-	this._indexBufferUsesQuadLayout = false;
-};
-$hxClasses["starling.rendering.Effect"] = starling_rendering_Effect;
-starling_rendering_Effect.__name__ = "starling.rendering.Effect";
-starling_rendering_Effect.__properties__ = {get_VERTEX_FORMAT:"get_VERTEX_FORMAT"};
-starling_rendering_Effect.get_VERTEX_FORMAT = function() {
-	return starling_rendering_VertexDataFormat.fromString("position:float2");
-};
-starling_rendering_Effect.prototype = {
-	_vertexBuffer: null
-	,_vertexBufferSize: null
-	,_vertexBufferFormat: null
-	,_indexBuffer: null
-	,_indexBufferSize: null
-	,_indexBufferUsesQuadLayout: null
-	,_mvpMatrix3D: null
-	,_onRestore: null
-	,_programBaseName: null
-	,dispose: function() {
-		this.purgeBuffers();
-	}
-	,purgeBuffers: function(vertexBuffer,indexBuffer) {
-		if(indexBuffer == null) {
-			indexBuffer = true;
-		}
-		if(vertexBuffer == null) {
-			vertexBuffer = true;
-		}
-		if(this._vertexBuffer != null && vertexBuffer) {
-			this._vertexBuffer.delete();
-			this._vertexBuffer = null;
-			this._vertexBufferSize = 0;
-		}
-		if(this._indexBuffer != null && indexBuffer) {
-			this._indexBuffer.delete();
-			this._indexBuffer = null;
-			this._indexBufferSize = 0;
-		}
-	}
-	,uploadIndexData: function(indexData,bufferUsage) {
-		if(bufferUsage == null) {
-			bufferUsage = 0;
-		}
-		var numIndices = indexData.get_numIndices();
-		var isQuadLayout = indexData.get_useQuadLayout();
-		var wasQuadLayout = this._indexBufferUsesQuadLayout;
-		if(this._indexBuffer != null) {
-			if(numIndices <= this._indexBufferSize) {
-				if(!isQuadLayout || !wasQuadLayout) {
-					indexData.uploadToIndexBuffer(this._indexBuffer);
-					this._indexBufferUsesQuadLayout = isQuadLayout && numIndices == this._indexBufferSize;
-				}
-			} else {
-				this.purgeBuffers(false,true);
-			}
-		}
-		if(this._indexBuffer == null && numIndices > 0) {
-			this._indexBuffer = indexData.createIndexBuffer(true,bufferUsage);
-			this._indexBufferSize = numIndices;
-			this._indexBufferUsesQuadLayout = isQuadLayout;
-		}
-	}
-	,uploadVertexData: function(vertexData,bufferUsage) {
-		if(bufferUsage == null) {
-			bufferUsage = 0;
-		}
-		if(this._vertexBuffer != null) {
-			if(vertexData.get_numVertices() <= this._vertexBufferSize && vertexData.get_format() == this._vertexBufferFormat) {
-				vertexData.uploadToVertexBuffer(this._vertexBuffer);
-			} else {
-				this.purgeBuffers(true,false);
-			}
-		}
-		if(this._vertexBuffer == null && vertexData.get_numVertices() > 0) {
-			this._vertexBuffer = vertexData.createVertexBuffer(true,bufferUsage);
-			this._vertexBufferSize = vertexData.get_numVertices();
-			this._vertexBufferFormat = vertexData.get_format();
-		}
-	}
-	,render: function(firstIndex,numTriangles) {
-		if(numTriangles == null) {
-			numTriangles = -1;
-		}
-		if(firstIndex == null) {
-			firstIndex = 0;
-		}
-		if(numTriangles < 0) {
-			numTriangles = this._indexBufferSize / 3 | 0;
-		}
-		if(numTriangles == 0 || this._vertexBuffer == null || this._indexBuffer == null) {
-			return;
-		}
-		var context = starling_core_Starling.get_currentContext();
-		if(context == null) {
-			throw new starling_errors_MissingContextError();
-		}
-		this.beforeDraw(context);
-		context.drawTriangles(this._vertexBuffer,this._indexBuffer,firstIndex,numTriangles);
-		this.afterDraw(context);
-	}
-	,beforeDraw: function(context) {
-		this.get_program().activate(context);
-		context.setMvpMatrix("mvpMatrix",this.get_mvpMatrix3D());
-	}
-	,afterDraw: function(context) {
-	}
-	,createProgram: function() {
-		return new starling_rendering_Program(kha_Shaders.starling_position_vert,kha_Shaders.starling_white_frag,this.get_vertexFormat());
-	}
-	,get_programVariantName: function() {
-		return 0;
-	}
-	,get_programBaseName: function() {
-		return this._programBaseName;
-	}
-	,set_programBaseName: function(value) {
-		return this._programBaseName = value;
-	}
-	,get_programName: function() {
-		var baseName = this.get_programBaseName();
-		var variantName = this.get_programVariantName();
-		var nameCache = starling_rendering_Effect.sProgramNameCache.h[baseName];
-		if(nameCache == null) {
-			nameCache = new haxe_ds_IntMap();
-			starling_rendering_Effect.sProgramNameCache.h[baseName] = nameCache;
-		}
-		var name = nameCache.h[variantName];
-		if(name == null) {
-			if(variantName != 0) {
-				name = baseName + "#" + StringTools.hex(variantName);
-			} else {
-				name = baseName;
-			}
-			nameCache.h[variantName] = name;
-		}
-		return name;
-	}
-	,get_program: function() {
-		var name = this.get_programName();
-		var painter = starling_core_Starling.get_currentPainter();
-		var program = painter.getProgram(name);
-		if(program == null) {
-			program = this.createProgram();
-			painter.registerProgram(name,program);
-		}
-		return program;
-	}
-	,get_onRestore: function() {
-		return this._onRestore;
-	}
-	,set_onRestore: function(value) {
-		return this._onRestore = value;
-	}
-	,get_vertexFormat: function() {
-		return starling_rendering_Effect.get_VERTEX_FORMAT();
-	}
-	,get_mvpMatrix3D: function() {
-		return this._mvpMatrix3D;
-	}
-	,set_mvpMatrix3D: function(value) {
-		this._mvpMatrix3D.copyFrom(value);
-		return value;
-	}
-	,get_indexBuffer: function() {
-		return this._indexBuffer;
-	}
-	,get_indexBufferSize: function() {
-		return this._indexBufferSize;
-	}
-	,get_vertexBuffer: function() {
-		return this._vertexBuffer;
-	}
-	,get_vertexBufferSize: function() {
-		return this._vertexBufferSize;
-	}
-	,__class__: starling_rendering_Effect
-	,__properties__: {get_vertexBufferSize:"get_vertexBufferSize",get_vertexBuffer:"get_vertexBuffer",get_indexBufferSize:"get_indexBufferSize",get_indexBuffer:"get_indexBuffer",get_program:"get_program",get_programName:"get_programName",get_programVariantName:"get_programVariantName",set_programBaseName:"set_programBaseName",get_programBaseName:"get_programBaseName",set_mvpMatrix3D:"set_mvpMatrix3D",get_mvpMatrix3D:"get_mvpMatrix3D",get_vertexFormat:"get_vertexFormat",set_onRestore:"set_onRestore",get_onRestore:"get_onRestore"}
-};
-var starling_rendering_FilterEffect = function() {
-	starling_rendering_Effect.call(this);
-	this._textureSmoothing = starling_core_Starling.get_currentDefaultTextureSmoothing();
-	this._textureRepeat = false;
-};
-$hxClasses["starling.rendering.FilterEffect"] = starling_rendering_FilterEffect;
-starling_rendering_FilterEffect.__name__ = "starling.rendering.FilterEffect";
-starling_rendering_FilterEffect.__properties__ = {get_VERTEX_FORMAT:"get_VERTEX_FORMAT"};
-starling_rendering_FilterEffect.get_VERTEX_FORMAT = function() {
-	return starling_rendering_VertexDataFormat.fromString("position:float2, texCoords:float2");
-};
-starling_rendering_FilterEffect.__super__ = starling_rendering_Effect;
-starling_rendering_FilterEffect.prototype = $extend(starling_rendering_Effect.prototype,{
-	_texture: null
-	,_textureSmoothing: null
-	,_textureRepeat: null
-	,get_programVariantName: function() {
-		if(this._texture != null) {
-			return 1;
-		} else {
-			return 0;
-		}
-	}
-	,createProgram: function() {
-		if(this._texture != null) {
-			return new starling_rendering_Program(kha_Shaders.starling_filter_vert,kha_Shaders.starling_texture_frag,this.get_vertexFormat());
-		} else {
-			return starling_rendering_Effect.prototype.createProgram.call(this);
-		}
-	}
-	,beforeDraw: function(context) {
-		starling_rendering_Effect.prototype.beforeDraw.call(this,context);
-		if(this._texture != null) {
-			this.setSamplerTexture(context,"tex",this._texture,this._textureSmoothing,this._textureRepeat);
-		}
-	}
-	,setSamplerTexture: function(context,samplerName,texture,smoothing,repeat) {
-		if(repeat == null) {
-			repeat = false;
-		}
-		var root = texture.get_root();
-		var canRepeat = repeat && (root.get_isPotTexture() || kha_Image.get_nonPow2Supported());
-		context.setTexture(samplerName,texture.get_base(),smoothing,texture.get_mipMapping(),canRepeat);
-	}
-	,get_vertexFormat: function() {
-		return starling_rendering_FilterEffect.get_VERTEX_FORMAT();
-	}
-	,get_texture: function() {
-		return this._texture;
-	}
-	,set_texture: function(value) {
-		return this._texture = value;
-	}
-	,get_textureSmoothing: function() {
-		return this._textureSmoothing;
-	}
-	,set_textureSmoothing: function(value) {
-		return this._textureSmoothing = value;
-	}
-	,get_textureRepeat: function() {
-		return this._textureRepeat;
-	}
-	,set_textureRepeat: function(value) {
-		return this._textureRepeat = value;
-	}
-	,__class__: starling_rendering_FilterEffect
-	,__properties__: $extend(starling_rendering_Effect.prototype.__properties__,{set_textureRepeat:"set_textureRepeat",get_textureRepeat:"get_textureRepeat",set_textureSmoothing:"set_textureSmoothing",get_textureSmoothing:"get_textureSmoothing",set_texture:"set_texture",get_texture:"get_texture"})
-});
 var starling_rendering_IndexData = function(initialCapacity) {
 	if(initialCapacity == null) {
 		initialCapacity = 48;
@@ -59852,61 +60002,6 @@ starling_rendering_IndexData.prototype = {
 	,__class__: starling_rendering_IndexData
 	,__properties__: {get_rawData:"get_rawData",set_useQuadLayout:"set_useQuadLayout",get_useQuadLayout:"get_useQuadLayout",get_indexSizeInBytes:"get_indexSizeInBytes",set_numQuads:"set_numQuads",get_numQuads:"get_numQuads",set_numTriangles:"set_numTriangles",get_numTriangles:"get_numTriangles",set_numIndices:"set_numIndices",get_numIndices:"get_numIndices"}
 };
-var starling_rendering_MeshEffect = function() {
-	starling_rendering_FilterEffect.call(this);
-	this._alpha = 1.0;
-	this._tinted = false;
-	this._optimizeIfNotTinted = js_Boot.getClass(this) == starling_rendering_MeshEffect;
-};
-$hxClasses["starling.rendering.MeshEffect"] = starling_rendering_MeshEffect;
-starling_rendering_MeshEffect.__name__ = "starling.rendering.MeshEffect";
-starling_rendering_MeshEffect.__properties__ = {get_VERTEX_FORMAT:"get_VERTEX_FORMAT"};
-starling_rendering_MeshEffect.get_VERTEX_FORMAT = function() {
-	return starling_rendering_VertexDataFormat.fromString("position:float2, texCoords:float2, color:bytes4");
-};
-starling_rendering_MeshEffect.__super__ = starling_rendering_FilterEffect;
-starling_rendering_MeshEffect.prototype = $extend(starling_rendering_FilterEffect.prototype,{
-	_alpha: null
-	,_tinted: null
-	,_optimizeIfNotTinted: null
-	,get_programVariantName: function() {
-		var noTinting = this._optimizeIfNotTinted && !this._tinted && this._alpha == 1.0 ? 1 : 0;
-		return starling_rendering_FilterEffect.prototype.get_programVariantName.call(this) | noTinting << 3;
-	}
-	,createProgram: function() {
-		if(this.get_texture() != null) {
-			if(this._optimizeIfNotTinted && !this._tinted && this._alpha == 1.0) {
-				return starling_rendering_FilterEffect.prototype.createProgram.call(this);
-			}
-			return new starling_rendering_Program(kha_Shaders.starling_mesh_textured_vert,kha_Shaders.starling_mesh_textured_frag,this.get_vertexFormat());
-		} else {
-			return new starling_rendering_Program(kha_Shaders.starling_mesh_vert,kha_Shaders.starling_mesh_frag,this.get_vertexFormat());
-		}
-	}
-	,beforeDraw: function(context) {
-		starling_rendering_FilterEffect.prototype.beforeDraw.call(this,context);
-		if(this._tinted || this._alpha != 1.0 || !this._optimizeIfNotTinted || this.get_texture() == null) {
-			context.setFloat4("alpha",this._alpha,this._alpha,this._alpha,this._alpha);
-		}
-	}
-	,get_vertexFormat: function() {
-		return starling_rendering_MeshEffect.get_VERTEX_FORMAT();
-	}
-	,get_alpha: function() {
-		return this._alpha;
-	}
-	,set_alpha: function(value) {
-		return this._alpha = value;
-	}
-	,get_tinted: function() {
-		return this._tinted;
-	}
-	,set_tinted: function(value) {
-		return this._tinted = value;
-	}
-	,__class__: starling_rendering_MeshEffect
-	,__properties__: $extend(starling_rendering_FilterEffect.prototype.__properties__,{set_tinted:"set_tinted",get_tinted:"get_tinted",set_alpha:"set_alpha",get_alpha:"get_alpha"})
-});
 var starling_rendering_Painter = function() {
 	this._batchTrimInterval = 250;
 	this._context = new starling_rendering_Context3D();
@@ -67236,9 +67331,12 @@ starling_display_DisplayObjectContainer.sCacheToken = new starling_rendering_Bat
 app_canvas_Brushes.SIZES = [4,8,16,32,64,128,256];
 app_canvas_Brushes.textures = [];
 app_canvas_EraserCursor.SEGMENTS = 72;
+starling_styles_MeshStyle.sPoint = new starling_geom_Point();
+starling_rendering_Effect.sProgramNameCache = new haxe_ds_StringMap();
 app_canvas_PixelIO.flipRows = false;
 app_canvas_PixelIO.detected = false;
 app_canvas_StampRenderer.MAX_STAMPS_PER_BATCH = 8000;
+app_canvas_WorldView.DARK_BACKGROUND = 1184274;
 app_export_PdfExporter.MAX_IMAGE_SIDE = 4096;
 app_export_PdfExporter.MARGIN = 32;
 app_export_PdfExporter.PT_PER_CANVAS_PX = 0.375;
@@ -67567,6 +67665,9 @@ kha_Scheduler.timeWarpSaveTime = 10.0;
 kha_Scheduler.DIF_COUNT = 3;
 kha_Scheduler.maxframetime = 0.5;
 kha_Scheduler.startTime = 0;
+kha_Shaders.ink_swap_fragData0 = "s1040:I3ZlcnNpb24gMTAwCnByZWNpc2lvbiBtZWRpdW1wIGZsb2F0OwpwcmVjaXNpb24gaGlnaHAgaW50OwoKdW5pZm9ybSBoaWdocCBzYW1wbGVyMkQgdGV4OwoKdmFyeWluZyBoaWdocCB2ZWMyIHZUZXhDb29yZHM7CnZhcnlpbmcgaGlnaHAgdmVjNCB2Q29sb3I7Cgp2b2lkIG1haW4oKQp7CiAgICBoaWdocCB2ZWM0IGMgPSB0ZXh0dXJlMkQodGV4LCB2VGV4Q29vcmRzKSAqIHZDb2xvcjsKICAgIGlmIChjLncgPiAwLjApCiAgICB7CiAgICAgICAgaGlnaHAgdmVjMyByZ2IgPSBjLnh5eiAvIHZlYzMoYy53KTsKICAgICAgICBoaWdocCBmbG9hdCBteCA9IG1heChtYXgocmdiLngsIHJnYi55KSwgcmdiLnopOwogICAgICAgIGhpZ2hwIGZsb2F0IHNhdCA9IG14IC0gbWluKG1pbihyZ2IueCwgcmdiLnkpLCByZ2Iueik7CiAgICAgICAgaGlnaHAgZmxvYXQgaW5rID0gKDEuMCAtIHNtb290aHN0ZXAoMC4xNTAwMDAwMDU5NjA0NjQ0Nzc1MzkwNjI1LCAwLjQ0OTk5OTk4ODA3OTA3MTA0NDkyMTg3NSwgbXgpKSAqICgxLjAgLSBzbW9vdGhzdGVwKDAuMTAwMDAwMDAxNDkwMTE2MTE5Mzg0NzY1NjI1LCAwLjMwMDAwMDAxMTkyMDkyODk1NTA3ODEyNSwgc2F0KSk7CiAgICAgICAgcmdiID0gbWl4KHJnYiwgdmVjMygwLjkzMDAwMDAwNzE1MjU1NzM3MzA0Njg3NSksIHZlYzMoaW5rKSk7CiAgICAgICAgaGlnaHAgdmVjMyBfODggPSByZ2IgKiBjLnc7CiAgICAgICAgYyA9IHZlYzQoXzg4LngsIF84OC55LCBfODgueiwgYy53KTsKICAgIH0KICAgIGdsX0ZyYWdEYXRhWzBdID0gYzsKfQoK";
+kha_Shaders.ink_swap_fragData1 = "s1056:I3ZlcnNpb24gMzAwIGVzCnByZWNpc2lvbiBtZWRpdW1wIGZsb2F0OwpwcmVjaXNpb24gaGlnaHAgaW50OwoKdW5pZm9ybSBoaWdocCBzYW1wbGVyMkQgdGV4OwoKaW4gaGlnaHAgdmVjMiB2VGV4Q29vcmRzOwppbiBoaWdocCB2ZWM0IHZDb2xvcjsKb3V0IGhpZ2hwIHZlYzQgZnJhZ0NvbG9yOwoKdm9pZCBtYWluKCkKewogICAgaGlnaHAgdmVjNCBjID0gdGV4dHVyZSh0ZXgsIHZUZXhDb29yZHMpICogdkNvbG9yOwogICAgaWYgKGMudyA%IDAuMCkKICAgIHsKICAgICAgICBoaWdocCB2ZWMzIHJnYiA9IGMueHl6IC8gdmVjMyhjLncpOwogICAgICAgIGhpZ2hwIGZsb2F0IG14ID0gbWF4KG1heChyZ2IueCwgcmdiLnkpLCByZ2Iueik7CiAgICAgICAgaGlnaHAgZmxvYXQgc2F0ID0gbXggLSBtaW4obWluKHJnYi54LCByZ2IueSksIHJnYi56KTsKICAgICAgICBoaWdocCBmbG9hdCBpbmsgPSAoMS4wIC0gc21vb3Roc3RlcCgwLjE1MDAwMDAwNTk2MDQ2NDQ3NzUzOTA2MjUsIDAuNDQ5OTk5OTg4MDc5MDcxMDQ0OTIxODc1LCBteCkpICogKDEuMCAtIHNtb290aHN0ZXAoMC4xMDAwMDAwMDE0OTAxMTYxMTkzODQ3NjU2MjUsIDAuMzAwMDAwMDExOTIwOTI4OTU1MDc4MTI1LCBzYXQpKTsKICAgICAgICByZ2IgPSBtaXgocmdiLCB2ZWMzKDAuOTMwMDAwMDA3MTUyNTU3MzczMDQ2ODc1KSwgdmVjMyhpbmspKTsKICAgICAgICBoaWdocCB2ZWMzIF84OCA9IHJnYiAqIGMudzsKICAgICAgICBjID0gdmVjNChfODgueCwgXzg4LnksIF84OC56LCBjLncpOwogICAgfQogICAgZnJhZ0NvbG9yID0gYzsKfQoK";
+kha_Shaders.ink_swap_fragData2 = "s982:I3ZlcnNpb24gMTAwCnByZWNpc2lvbiBtZWRpdW1wIGZsb2F0OwpwcmVjaXNpb24gbWVkaXVtcCBpbnQ7Cgp1bmlmb3JtIG1lZGl1bXAgc2FtcGxlcjJEIHRleDsKCnZhcnlpbmcgdmVjMiB2VGV4Q29vcmRzOwp2YXJ5aW5nIHZlYzQgdkNvbG9yOwoKdm9pZCBtYWluKCkKewogICAgdmVjNCBjID0gdGV4dHVyZTJEKHRleCwgdlRleENvb3JkcykgKiB2Q29sb3I7CiAgICBpZiAoYy53ID4gMC4wKQogICAgewogICAgICAgIHZlYzMgcmdiID0gYy54eXogLyB2ZWMzKGMudyk7CiAgICAgICAgZmxvYXQgbXggPSBtYXgobWF4KHJnYi54LCByZ2IueSksIHJnYi56KTsKICAgICAgICBmbG9hdCBzYXQgPSBteCAtIG1pbihtaW4ocmdiLngsIHJnYi55KSwgcmdiLnopOwogICAgICAgIGZsb2F0IGluayA9ICgxLjAgLSBzbW9vdGhzdGVwKDAuMTUwMDAwMDA1OTYwNDY0NDc3NTM5MDYyNSwgMC40NDk5OTk5ODgwNzkwNzEwNDQ5MjE4NzUsIG14KSkgKiAoMS4wIC0gc21vb3Roc3RlcCgwLjEwMDAwMDAwMTQ5MDExNjExOTM4NDc2NTYyNSwgMC4zMDAwMDAwMTE5MjA5Mjg5NTUwNzgxMjUsIHNhdCkpOwogICAgICAgIHJnYiA9IG1peChyZ2IsIHZlYzMoMC45MzAwMDAwMDcxNTI1NTczNzMwNDY4NzUpLCB2ZWMzKGluaykpOwogICAgICAgIHZlYzMgXzg4ID0gcmdiICogYy53OwogICAgICAgIGMgPSB2ZWM0KF84OC54LCBfODgueSwgXzg4LnosIGMudyk7CiAgICB9CiAgICBnbF9GcmFnRGF0YVswXSA9IGM7Cn0KCg";
 kha_Shaders.painter_colored_fragData0 = "s198:I3ZlcnNpb24gMTAwCnByZWNpc2lvbiBtZWRpdW1wIGZsb2F0OwpwcmVjaXNpb24gaGlnaHAgaW50OwoKdmFyeWluZyBoaWdocCB2ZWM0IGZyYWdtZW50Q29sb3I7Cgp2b2lkIG1haW4oKQp7CiAgICBnbF9GcmFnRGF0YVswXSA9IGZyYWdtZW50Q29sb3I7Cn0KCg";
 kha_Shaders.painter_colored_fragData1 = "s223:I3ZlcnNpb24gMzAwIGVzCnByZWNpc2lvbiBtZWRpdW1wIGZsb2F0OwpwcmVjaXNpb24gaGlnaHAgaW50OwoKb3V0IGhpZ2hwIHZlYzQgRnJhZ0NvbG9yOwppbiBoaWdocCB2ZWM0IGZyYWdtZW50Q29sb3I7Cgp2b2lkIG1haW4oKQp7CiAgICBGcmFnQ29sb3IgPSBmcmFnbWVudENvbG9yOwp9Cgo";
 kha_Shaders.painter_colored_fragData2 = "s192:I3ZlcnNpb24gMTAwCnByZWNpc2lvbiBtZWRpdW1wIGZsb2F0OwpwcmVjaXNpb24gbWVkaXVtcCBpbnQ7Cgp2YXJ5aW5nIHZlYzQgZnJhZ21lbnRDb2xvcjsKCnZvaWQgbWFpbigpCnsKICAgIGdsX0ZyYWdEYXRhWzBdID0gZnJhZ21lbnRDb2xvcjsKfQoK";
@@ -67928,7 +68029,6 @@ starling_display_BlendMode.SCREEN = "screen";
 starling_display_BlendMode.ERASE = "erase";
 starling_display_BlendMode.MASK = "mask";
 starling_display_BlendMode.BELOW = "below";
-starling_styles_MeshStyle.sPoint = new starling_geom_Point();
 starling_display_Mesh.sDefaultStyle = starling_styles_MeshStyle;
 starling_display_Quad.sPoint3D = new starling_geom_Vector3D();
 starling_display_Quad.sMatrix = new starling_geom_Matrix();
@@ -67981,7 +68081,6 @@ starling_rendering_CompareMode.GREATER = "greater";
 starling_rendering_CompareMode.NOT_EQUAL = "notEqual";
 starling_rendering_Context3D.sMatrix3D = new starling_geom_Matrix3D();
 starling_rendering_Context3D.sFastMatrix = new kha_math_FastMatrix4(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);
-starling_rendering_Effect.sProgramNameCache = new haxe_ds_StringMap();
 starling_rendering_IndexData.sQuadData = [];
 starling_rendering_IndexData.sQuadDataNumIndices = 0;
 starling_rendering_Painter.DEFAULT_STENCIL_VALUE = 127;
