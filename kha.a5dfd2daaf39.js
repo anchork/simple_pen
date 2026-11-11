@@ -626,6 +626,9 @@ Xml.prototype = {
 var app_Config = function() { };
 $hxClasses["app.Config"] = app_Config;
 app_Config.__name__ = "app.Config";
+app_Config.zoomLabel = function(zoom) {
+	return Math.round(zoom * 100) + "%";
+};
 var starling_events_EventDispatcher = function() {
 	this._eventStack = [];
 };
@@ -3114,7 +3117,8 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 	,toolbar: null
 	,pageBar: null
 	,binderPanel: null
-	,zoomMenu: null
+	,menu: null
+	,folder: null
 	,library: null
 	,saveAt: null
 	,libraryDirty: null
@@ -3135,11 +3139,14 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		});
 		app_store_Db.open().then(function(d) {
 			_gthis.db = d;
+			_gthis.folder = new app_store_FolderSync(_gthis.db,_gthis.queue);
 			return _gthis.db.getMeta("library");
 		}).then(function(data) {
 			_gthis.library = app_model_Library.sanitize(data);
 			_gthis.start();
 			_gthis.saveLibrary();
+			_gthis.folder.onChange = $bind(_gthis,_gthis.updateFolderButton);
+			_gthis.folder.restore();
 			return null;
 		}).catch(function(e) {
 			window.alert(Std.string("保存領域 (IndexedDB) を開けませんでした: " + e));
@@ -3156,7 +3163,7 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		this.tools.addEventListener("change",$bind(this,this.updateCursor));
 		this.ui = new starling_display_Sprite();
 		this.addChild(this.ui);
-		this.toolbar = new app_ui_Toolbar(this.tools,{ exportPdf : $bind(this,this.exportPdf), openBinders : $bind(this,this.openBinders), openZoomMenu : $bind(this,this.openZoomMenu)});
+		this.toolbar = new app_ui_Toolbar(this.tools,{ exportPdf : $bind(this,this.exportPdf), openBinders : $bind(this,this.openBinders), openZoomMenu : $bind(this,this.openZoomMenu), openFolderMenu : app_store_FolderSync.isSupported() ? $bind(this,this.openFolderMenu) : null});
 		this.ui.addChild(this.toolbar);
 		this.pageBar = new app_ui_PageBar({ prev : function() {
 			_gthis.goToPage(_gthis.currentPageIndex() - 1);
@@ -3166,8 +3173,8 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		this.ui.addChild(this.pageBar);
 		this.binderPanel = new app_ui_BinderPanel({ select : $bind(this,this.selectBinder), create : $bind(this,this.createBinder), rename : $bind(this,this.renameBinder), remove : $bind(this,this.removeBinder)});
 		this.ui.addChild(this.binderPanel);
-		this.zoomMenu = new app_ui_ZoomMenu($bind(this,this.setZoom));
-		this.ui.addChild(this.zoomMenu);
+		this.menu = new app_ui_DropMenu();
+		this.ui.addChild(this.menu);
 		this.input = new app_input_PointerInput(window.document.getElementById("khanvas"),this);
 		this.get_stage().addEventListener("resize",$bind(this,this.onResize));
 		this.layout();
@@ -3441,11 +3448,85 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		this.world.invalidateRange();
 	}
 	,openZoomMenu: function(anchor) {
-		if(this.zoomMenu.isOpen) {
-			this.zoomMenu.close();
+		var _gthis = this;
+		if(this.menu.isOpen) {
+			this.menu.close();
 			return;
 		}
-		this.zoomMenu.open(anchor.getBounds(this.get_stage()),this.world.zoom,this.get_stage().get_stageWidth(),this.get_stage().get_stageHeight());
+		var items = [];
+		var _g = 0;
+		var _g1 = app_Config.ZOOM_LEVELS;
+		while(_g < _g1.length) {
+			var level = _g1[_g];
+			++_g;
+			var z = [level];
+			items.push({ label : app_Config.zoomLabel(z[0]), selected : Math.abs(z[0] - this.world.zoom) < 0.005, action : (function(z) {
+				return function() {
+					_gthis.setZoom(z[0]);
+				};
+			})(z)});
+		}
+		this.menu.open(items,anchor.getBounds(this.get_stage()),96,this.get_stage().get_stageWidth(),this.get_stage().get_stageHeight());
+	}
+	,updateFolderButton: function() {
+		this.toolbar.setFolderState(this.folder.state == 2,this.folder.state == 3);
+	}
+	,openFolderMenu: function(anchor) {
+		var _gthis = this;
+		if(this.menu.isOpen) {
+			this.menu.close();
+			return;
+		}
+		var items;
+		switch(this.folder.state) {
+		case 2:
+			items = [{ label : "自動保存中: " + this.folder.get_folderName()},{ label : "今すぐ同期", action : function() {
+				_gthis.saveNow(false);
+				_gthis.folder.syncNow();
+			}},{ label : "フォルダから開く…", action : $bind(this,this.openFromFolder)},{ label : "自動保存を停止", action : function() {
+				_gthis.folder.disconnect();
+			}}];
+			break;
+		case 3:
+			items = [{ label : "保存先: " + this.folder.get_folderName() + "（許可が必要）"},{ label : "再接続する", action : function() {
+				_gthis.saveNow(false);
+				_gthis.folder.reconnect();
+			}},{ label : "自動保存を停止", action : function() {
+				_gthis.folder.disconnect();
+			}}];
+			break;
+		default:
+			items = [{ label : "ローカルフォルダに自動保存"},{ label : "フォルダを選んで保存開始…", action : function() {
+				_gthis.saveNow(false);
+				_gthis.folder.connect();
+			}},{ label : "フォルダから開く…", action : $bind(this,this.openFromFolder)}];
+		}
+		this.menu.open(items,anchor.getBounds(this.get_stage()),240,this.get_stage().get_stageWidth(),this.get_stage().get_stageHeight(),false);
+	}
+	,openFromFolder: function() {
+		var _gthis = this;
+		if(this.busy) {
+			return;
+		}
+		this.saveNow(false);
+		this.busy = true;
+		var closed = false;
+		this.folder.open(function() {
+			_gthis.storeView();
+			_gthis.chunks.closePage();
+			closed = true;
+		}).then(function(data) {
+			_gthis.busy = false;
+			if(data != null) {
+				_gthis.library = app_model_Library.sanitize(data);
+				_gthis.libraryDirty = false;
+				_gthis.binderPanel.close();
+				_gthis.openCurrentPage();
+			} else if(closed) {
+				_gthis.openCurrentPage();
+			}
+			return null;
+		});
 	}
 	,setZoom: function(zoom) {
 		this.world.zoomAt(this.get_stage().get_stageWidth() / 2,this.get_stage().get_stageHeight() / 2,zoom / this.world.zoom);
@@ -4145,6 +4226,7 @@ app_canvas_ChunkManager.prototype = {
 			this.stored.h[c.key] = true;
 			this.queue.enqueue(function() {
 				return (fast ? Promise.resolve(app_store_Codec.raw(px)) : app_store_Codec.compress(px)).then(function(rec) {
+					rec.t = new Date().getTime();
 					return _gthis.db.putChunk(page,cx,cy,rec);
 				});
 			}).then(release);
@@ -5465,7 +5547,19 @@ app_store_Codec.decompress = function(rec) {
 		return new Uint8Array(buf);
 	});
 };
+var app_store_DbMirror = function() { };
+$hxClasses["app.store.DbMirror"] = app_store_DbMirror;
+app_store_DbMirror.__name__ = "app.store.DbMirror";
+app_store_DbMirror.__isInterface__ = true;
+app_store_DbMirror.prototype = {
+	mirrorLibrary: null
+	,mirrorChunk: null
+	,mirrorDeleteChunk: null
+	,mirrorDeletePage: null
+	,__class__: app_store_DbMirror
+};
 var app_store_Db = function(db) {
+	this.mirror = null;
 	this.db = db;
 };
 $hxClasses["app.store.Db"] = app_store_Db;
@@ -5495,6 +5589,7 @@ app_store_Db.pageRange = function(pageId) {
 };
 app_store_Db.prototype = {
 	db: null
+	,mirror: null
 	,run: function(store,mode,body) {
 		var _gthis = this;
 		return new Promise(function(resolve,reject) {
@@ -5517,9 +5612,21 @@ app_store_Db.prototype = {
 		});
 	}
 	,putMeta: function(key,value) {
-		return this.run("meta","readwrite",function(os) {
+		var _gthis = this;
+		var p = this.run("meta","readwrite",function(os) {
 			return os.put(value,key);
 		});
+		if(key == "library") {
+			return p.then(function(_) {
+				if(_gthis.mirror != null) {
+					return _gthis.mirror.mirrorLibrary(value);
+				} else {
+					return null;
+				}
+			});
+		} else {
+			return p;
+		}
 	}
 	,getChunk: function(pageId,cx,cy) {
 		return this.run("chunks","readonly",function(os) {
@@ -5527,13 +5634,57 @@ app_store_Db.prototype = {
 		});
 	}
 	,putChunk: function(pageId,cx,cy,rec) {
+		var _gthis = this;
 		return this.run("chunks","readwrite",function(os) {
 			return os.put(rec,[pageId,cx,cy]);
+		}).then(function(_) {
+			if(_gthis.mirror != null) {
+				return _gthis.mirror.mirrorChunk(pageId,cx,cy,rec);
+			} else {
+				return null;
+			}
 		});
 	}
 	,deleteChunk: function(pageId,cx,cy) {
+		var _gthis = this;
 		return this.run("chunks","readwrite",function(os) {
 			return os.delete([pageId,cx,cy]);
+		}).then(function(_) {
+			if(_gthis.mirror != null) {
+				return _gthis.mirror.mirrorDeleteChunk(pageId,cx,cy);
+			} else {
+				return null;
+			}
+		});
+	}
+	,pageChunks: function(pageId) {
+		var _gthis = this;
+		return new Promise(function(resolve,reject) {
+			var tx = _gthis.db.transaction("chunks","readonly");
+			var os = tx.objectStore("chunks");
+			var keys = os.getAllKeys(app_store_Db.pageRange(pageId));
+			var values = os.getAll(app_store_Db.pageRange(pageId));
+			tx.oncomplete = function(_) {
+				var k = keys.result;
+				var v = values.result;
+				var resolve1 = resolve;
+				var _g = [];
+				var _g1 = 0;
+				var _g2 = k.length;
+				while(_g1 < _g2) {
+					var i = _g1++;
+					_g.push({ cx : k[i][1], cy : k[i][2], rec : v[i]});
+				}
+				resolve1(_g);
+			};
+			tx.onerror = function(_) {
+				reject(tx.error);
+			};
+		});
+	}
+	,clearChunks: function() {
+		return this.run("chunks","readwrite",function(os) {
+			return os.clear();
 		});
 	}
 	,chunkKeys: function(pageId) {
@@ -5543,12 +5694,427 @@ app_store_Db.prototype = {
 		});
 	}
 	,deletePage: function(pageId) {
+		var _gthis = this;
 		return this.run("chunks","readwrite",function(os) {
 			var tmp = app_store_Db.pageRange(pageId);
 			return os.delete(tmp);
+		}).then(function(_) {
+			if(_gthis.mirror != null) {
+				return _gthis.mirror.mirrorDeletePage(pageId);
+			} else {
+				return null;
+			}
 		});
 	}
 	,__class__: app_store_Db
+};
+var app_store_FolderSync = function(db,queue) {
+	this.onChange = null;
+	this.dir = null;
+	this.db = db;
+	this.queue = queue;
+	this.state = app_store_FolderSync.isSupported() ? 1 : 0;
+	db.mirror = this;
+};
+$hxClasses["app.store.FolderSync"] = app_store_FolderSync;
+app_store_FolderSync.__name__ = "app.store.FolderSync";
+app_store_FolderSync.__interfaces__ = [app_store_DbMirror];
+app_store_FolderSync.isSupported = function() {
+	return typeof window.showDirectoryPicker === 'function';
+};
+app_store_FolderSync.chunkName = function(cx,cy) {
+	return cx + "_" + cy + ".chunk";
+};
+app_store_FolderSync.chunkBlob = function(rec) {
+	return new Blob([new Uint8Array([rec.z ? 1 : 0]), rec.d]);
+};
+app_store_FolderSync.readChunk = function(fileHandle) {
+	return fileHandle.getFile().then(f => f.arrayBuffer().then(b => b.byteLength < 1 ? null : ({z: new Uint8Array(b)[0] === 1, d: b.slice(1), t: f.lastModified})));
+};
+app_store_FolderSync.writeLibrary = function(root,library) {
+	return app_store_FolderSync.writeFile(root,"library.json",JSON.stringify({ format : "simple-pen", version : 1, library : library},null,"  "));
+};
+app_store_FolderSync.readLibrary = function(root) {
+	var p = root.getFileHandle("library.json").then(h => h.getFile()).then(f => f.text()).catch(e => { if (e.name === 'NotFoundError') return null; throw e; });
+	return p.then(function(text) {
+		if(text == null) {
+			return null;
+		}
+		var d = JSON.parse(text);
+		if(d != null && d.format == "simple-pen" && d.library != null) {
+			return d.library;
+		} else {
+			return null;
+		}
+	});
+};
+app_store_FolderSync.pageDir = function(root,pageId,create) {
+	return app_store_FolderSync.getDir(root,"pages",create).then(function(d) {
+		if(d == null) {
+			return null;
+		} else {
+			return app_store_FolderSync.getDir(d,pageId,create);
+		}
+	});
+};
+app_store_FolderSync.getDir = function(parent,name,create) {
+	return parent.getDirectoryHandle(name, {create: create}).catch(e => { if (e.name === 'NotFoundError' || e.name === 'TypeMismatchError') return null; throw e; });
+};
+app_store_FolderSync.writeFile = function(d,name,data) {
+	return (async (d, n, b) => { const f = await d.getFileHandle(n, {create: true}); const w = await f.createWritable(); await w.write(b); await w.close(); })(d, name, data);
+};
+app_store_FolderSync.removeEntry = function(d,name,recursive) {
+	return d.removeEntry(name, {recursive: recursive}).catch(e => { if (e.name !== 'NotFoundError') throw e; });
+};
+app_store_FolderSync.entries = function(d) {
+	return (async d => { const a = []; for await (const e of d.values()) a.push(e); return a; })(d);
+};
+app_store_FolderSync.fileTimes = function(d) {
+	return (async d => { const r = {}; for await (const e of d.values()) if (e.kind === 'file') r[e.name] = (await e.getFile()).lastModified; return r; })(d);
+};
+app_store_FolderSync.sequence = function(items,f) {
+	var p = Promise.resolve(null);
+	var _g = 0;
+	while(_g < items.length) {
+		var item = [items[_g]];
+		++_g;
+		p = p.then((function(item) {
+			return function(_) {
+				return f(item[0]);
+			};
+		})(item));
+	}
+	return p;
+};
+app_store_FolderSync.prototype = {
+	db: null
+	,queue: null
+	,dir: null
+	,state: null
+	,onChange: null
+	,get_folderName: function() {
+		if(this.dir != null) {
+			return this.dir.name;
+		} else {
+			return "";
+		}
+	}
+	,setState: function(s) {
+		this.state = s;
+		if(this.onChange != null) {
+			this.onChange();
+		}
+	}
+	,restore: function() {
+		var _gthis = this;
+		if(this.state == 0) {
+			return Promise.resolve(null);
+		}
+		return this.db.getMeta("folderHandle").then(function(h) {
+			if(h == null) {
+				return null;
+			}
+			_gthis.dir = h;
+			return _gthis.permission(false).then(function(granted) {
+				if(!granted) {
+					_gthis.setState(3);
+					return null;
+				}
+				_gthis.setState(2);
+				return _gthis.queue.enqueue(function() {
+					return _gthis.syncAll(false);
+				});
+			});
+		}).catch(function(e) {
+			return null;
+		});
+	}
+	,reconnect: function() {
+		var _gthis = this;
+		if(this.dir == null) {
+			return Promise.resolve(null);
+		}
+		return this.permission(true).then(function(granted) {
+			if(!granted) {
+				return null;
+			}
+			_gthis.setState(2);
+			return _gthis.queue.enqueue(function() {
+				return _gthis.syncAll(false);
+			});
+		});
+	}
+	,connect: function() {
+		var _gthis = this;
+		return this.pick().then(function(h) {
+			if(h == null) {
+				return false;
+			}
+			return app_store_FolderSync.readLibrary(h).then(function(existing) {
+				if(existing != null && !window.confirm("このフォルダには既に Simple Pen のデータがあります。\n現在のデータで上書きしますか？")) {
+					return false;
+				}
+				return _gthis.remember(h).then(function(_) {
+					_gthis.setState(2);
+					return _gthis.queue.enqueue(function() {
+						return _gthis.syncAll(true);
+					}).then(function(_) {
+						return true;
+					});
+				});
+			});
+		}).catch(function(e) {
+			return _gthis.fail("フォルダへの保存を開始できませんでした",e);
+		});
+	}
+	,open: function(beforeImport) {
+		var _gthis = this;
+		return this.pick().then(function(h) {
+			if(h == null) {
+				return null;
+			}
+			return app_store_FolderSync.readLibrary(h).then(function(library) {
+				if(library == null) {
+					window.alert("このフォルダには Simple Pen のデータ (library.json) がありません。");
+					return null;
+				}
+				if(!window.confirm("フォルダのデータを開きます。\n現在のデータは置き換えられます。よろしいですか？")) {
+					return null;
+				}
+				beforeImport();
+				_gthis.setState(1);
+				return _gthis.queue.enqueue(function() {
+					return _gthis.importFrom(h,library);
+				}).then(function(_) {
+					return _gthis.remember(h);
+				}).then(function(_) {
+					_gthis.setState(2);
+					return library;
+				});
+			});
+		}).catch(function(e) {
+			return _gthis.fail("フォルダを開けませんでした",e);
+		});
+	}
+	,disconnect: function() {
+		this.dir = null;
+		this.db.putMeta("folderHandle",null);
+		this.setState(app_store_FolderSync.isSupported() ? 1 : 0);
+	}
+	,syncNow: function() {
+		var _gthis = this;
+		if(this.state != 2) {
+			return Promise.resolve(null);
+		}
+		return this.queue.enqueue(function() {
+			return _gthis.syncAll(false);
+		});
+	}
+	,remember: function(h) {
+		this.dir = h;
+		return this.db.putMeta("folderHandle",h);
+	}
+	,pick: function() {
+		var p = window.showDirectoryPicker({mode: 'readwrite', id: 'simple-pen'});
+		return p.catch(function(e) {
+			if(e != null && e.name == "AbortError") {
+				return null;
+			}
+			throw haxe_Exception.thrown(e);
+		});
+	}
+	,permission: function(request) {
+		var p = request ? this.dir.requestPermission({ mode : "readwrite"}) : this.dir.queryPermission({ mode : "readwrite"});
+		return p.then(function(s) {
+			return s == "granted";
+		}).catch(function(_) {
+			return false;
+		});
+	}
+	,fail: function(message,e) {
+		var v = e != null && e.message != null ? e.message : Std.string(e);
+		window.alert(Std.string(message + "\n" + v));
+		return null;
+	}
+	,mirrorLibrary: function(library) {
+		var _gthis = this;
+		return this.guard(function() {
+			return app_store_FolderSync.writeLibrary(_gthis.dir,library);
+		});
+	}
+	,mirrorChunk: function(pageId,cx,cy,rec) {
+		var _gthis = this;
+		return this.guard(function() {
+			return app_store_FolderSync.pageDir(_gthis.dir,pageId,true).then(function(d) {
+				return app_store_FolderSync.writeFile(d,cx + "_" + cy + ".chunk",app_store_FolderSync.chunkBlob(rec));
+			});
+		});
+	}
+	,mirrorDeleteChunk: function(pageId,cx,cy) {
+		var _gthis = this;
+		return this.guard(function() {
+			return app_store_FolderSync.pageDir(_gthis.dir,pageId,false).then(function(d) {
+				if(d == null) {
+					return null;
+				} else {
+					return app_store_FolderSync.removeEntry(d,cx + "_" + cy + ".chunk",false);
+				}
+			});
+		});
+	}
+	,mirrorDeletePage: function(pageId) {
+		var _gthis = this;
+		return this.guard(function() {
+			return app_store_FolderSync.getDir(_gthis.dir,"pages",false).then(function(d) {
+				if(d == null) {
+					return null;
+				} else {
+					return app_store_FolderSync.removeEntry(d,pageId,true);
+				}
+			});
+		});
+	}
+	,guard: function(op) {
+		var _gthis = this;
+		if(this.state != 2 || this.dir == null) {
+			return Promise.resolve(null);
+		}
+		return op().catch(function(e) {
+			var name = e != null ? e.name : "";
+			if(name == "NotAllowedError" || name == "SecurityError" || name == "NotFoundError") {
+				_gthis.setState(3);
+			}
+			return null;
+		});
+	}
+	,syncAll: function(force) {
+		var _gthis = this;
+		if(this.state != 2) {
+			return Promise.resolve(null);
+		}
+		var root = this.dir;
+		var task = this.db.getMeta("library").then(function(library) {
+			if(library == null) {
+				return null;
+			}
+			var pageIds = [];
+			var _g = 0;
+			var _g1 = library.binders;
+			while(_g < _g1.length) {
+				var b = _g1[_g];
+				++_g;
+				var _g2 = 0;
+				var _g3 = b.pages;
+				while(_g2 < _g3.length) {
+					var p = _g3[_g2];
+					++_g2;
+					pageIds.push(p.id);
+				}
+			}
+			return app_store_FolderSync.writeLibrary(root,library).then(function(_) {
+				return app_store_FolderSync.getDir(root,"pages",true);
+			}).then(function(pagesDir) {
+				return app_store_FolderSync.sequence(pageIds,function(id) {
+					return _gthis.syncPage(pagesDir,id,force);
+				}).then(function(_) {
+					return app_store_FolderSync.entries(pagesDir);
+				}).then(function(list) {
+					return app_store_FolderSync.sequence(list,function(e) {
+						if(e.kind == "directory" && pageIds.indexOf(e.name) < 0) {
+							return app_store_FolderSync.removeEntry(pagesDir,e.name,true);
+						} else {
+							return null;
+						}
+					});
+				});
+			});
+		});
+		return task.catch(function(e) {
+			_gthis.setState(3);
+			return null;
+		});
+	}
+	,syncPage: function(pagesDir,pageId,force) {
+		return this.db.pageChunks(pageId).then(function(chunks) {
+			return app_store_FolderSync.getDir(pagesDir,pageId,chunks.length > 0).then(function(d) {
+				if(d == null) {
+					return null;
+				}
+				return app_store_FolderSync.fileTimes(d).then(function(times) {
+					var wanted_h = Object.create(null);
+					var writes = [];
+					var _g = 0;
+					while(_g < chunks.length) {
+						var c = chunks[_g];
+						++_g;
+						var name = c.cx + "_" + c.cy + ".chunk";
+						wanted_h[name] = true;
+						var fileTime = Reflect.field(times,name);
+						var t = c.rec.t != null ? c.rec.t : 0;
+						if(force || fileTime == null || fileTime < t) {
+							writes.push(c);
+						}
+					}
+					var _g = [];
+					var _g1 = 0;
+					var _g2 = Reflect.fields(times);
+					while(_g1 < _g2.length) {
+						var name = _g2[_g1];
+						++_g1;
+						if(!Object.prototype.hasOwnProperty.call(wanted_h,name) && app_store_FolderSync.CHUNK_NAME.match(name)) {
+							_g.push(name);
+						}
+					}
+					var stale = _g;
+					return app_store_FolderSync.sequence(writes,function(c) {
+						return app_store_FolderSync.writeFile(d,c.cx + "_" + c.cy + ".chunk",app_store_FolderSync.chunkBlob(c.rec));
+					}).then(function(_) {
+						return app_store_FolderSync.sequence(stale,function(name) {
+							return app_store_FolderSync.removeEntry(d,name,false);
+						});
+					});
+				});
+			});
+		});
+	}
+	,importFrom: function(root,library) {
+		var _gthis = this;
+		return this.db.clearChunks().then(function(_) {
+			return app_store_FolderSync.getDir(root,"pages",false);
+		}).then(function(pagesDir) {
+			if(pagesDir == null) {
+				return null;
+			}
+			return app_store_FolderSync.entries(pagesDir).then(function(pages) {
+				return app_store_FolderSync.sequence(pages,function(page) {
+					if(page.kind != "directory") {
+						return null;
+					}
+					var pageId = page.name;
+					return app_store_FolderSync.entries(page).then(function(files) {
+						return app_store_FolderSync.sequence(files,function(f) {
+							if(f.kind != "file" || !app_store_FolderSync.CHUNK_NAME.match(f.name)) {
+								return null;
+							}
+							var cx = Std.parseInt(app_store_FolderSync.CHUNK_NAME.matched(1));
+							var cy = Std.parseInt(app_store_FolderSync.CHUNK_NAME.matched(2));
+							return app_store_FolderSync.readChunk(f).then(function(rec) {
+								if(rec == null) {
+									return null;
+								} else {
+									return _gthis.db.putChunk(pageId,cx,cy,rec);
+								}
+							});
+						});
+					});
+				});
+			});
+		}).then(function(_) {
+			return _gthis.db.putMeta("library",library);
+		});
+	}
+	,__class__: app_store_FolderSync
+	,__properties__: {get_folderName:"get_folderName"}
 };
 var app_store_SaveQueue = function() {
 	this.pending = 0;
@@ -7599,6 +8165,94 @@ app_ui_CanvasTextRenderer.prototype = $extend(feathers_controls_text_BaseTextRen
 	,__class__: app_ui_CanvasTextRenderer
 	,__properties__: $extend(feathers_controls_text_BaseTextRenderer.prototype.__properties__,{get_baseline:"get_baseline",get_numLines:"get_numLines"})
 });
+var app_ui_DropMenu = function() {
+	this.isOpen = false;
+	var _gthis = this;
+	starling_display_Sprite.call(this);
+	this.set_visible(false);
+	this.blocker = new starling_display_Quad(10,10,0);
+	this.blocker.set_alpha(0);
+	this.blocker.addEventListener("touch",function(e) {
+		if(e.getTouch(_gthis.blocker,"ended") != null) {
+			_gthis.close();
+		}
+	});
+	this.addChild(this.blocker);
+	this.border = app_ui_Icons.roundSkin(1);
+	this.addChild(this.border);
+	this.panel = new feathers_controls_LayoutGroup();
+	var layout = new feathers_layout_VerticalLayout();
+	layout.set_padding(4);
+	layout.set_gap(1);
+	layout.set_horizontalAlign("justify");
+	this.panel.set_layout(layout);
+	this.panel.set_backgroundSkin(app_ui_Icons.roundSkin(7));
+	this.addChild(this.panel);
+};
+$hxClasses["app.ui.DropMenu"] = app_ui_DropMenu;
+app_ui_DropMenu.__name__ = "app.ui.DropMenu";
+app_ui_DropMenu.__super__ = starling_display_Sprite;
+app_ui_DropMenu.prototype = $extend(starling_display_Sprite.prototype,{
+	blocker: null
+	,border: null
+	,panel: null
+	,isOpen: null
+	,open: function(items,anchor,width,stageWidth,stageHeight,center) {
+		if(center == null) {
+			center = true;
+		}
+		this.panel.removeChildren(0,-1,true);
+		var _g = 0;
+		while(_g < items.length) {
+			var item = items[_g];
+			++_g;
+			this.panel.addChild(this.createItem(item,center));
+		}
+		this.panel.set_width(width);
+		this.blocker.set_width(stageWidth);
+		this.blocker.set_height(stageHeight);
+		this.panel.validate();
+		this.panel.set_x(Math.max(4,Math.min(anchor.x + (anchor.width - this.panel.get_width()) / 2,stageWidth - this.panel.get_width() - 4)));
+		this.panel.set_y(anchor.y + anchor.height + 4);
+		this.border.set_x(this.panel.get_x() - 1);
+		this.border.set_y(this.panel.get_y() - 1);
+		this.border.set_width(this.panel.get_width() + 2);
+		this.border.set_height(this.panel.get_height() + 2);
+		this.isOpen = true;
+		this.set_visible(true);
+	}
+	,close: function() {
+		this.isOpen = false;
+		this.set_visible(false);
+	}
+	,createItem: function(item,center) {
+		var _gthis = this;
+		var b = new feathers_controls_ToggleButton();
+		b.set_isToggle(false);
+		b.set_label(item.label);
+		b.set_horizontalAlign(center ? "center" : "left");
+		b.set_paddingLeft(b.set_paddingRight(10));
+		b.set_height(34);
+		if(item.action == null) {
+			b.set_fontStyles(app_ui_Ui.format(12,9));
+			b.set_isEnabled(false);
+			return b;
+		}
+		b.set_fontStyles(app_ui_Ui.format(14));
+		b.set_defaultSkin(app_ui_Icons.roundSkin(3,0));
+		b.setSkinForState("hover",app_ui_Icons.roundSkin(3));
+		b.setSkinForState("down",app_ui_Icons.roundSkin(4));
+		b.set_defaultSelectedSkin(app_ui_Icons.roundSkin(5));
+		b.set_isSelected(item.selected == true);
+		var action = item.action;
+		b.addEventListener("triggered",function(_) {
+			_gthis.close();
+			action();
+		});
+		return b;
+	}
+	,__class__: app_ui_DropMenu
+});
 var app_ui_Icons = function() { };
 $hxClasses["app.ui.Icons"] = app_ui_Icons;
 app_ui_Icons.__name__ = "app.ui.Icons";
@@ -7716,6 +8370,16 @@ app_ui_Icons.paint = function(c,name) {
 		c.stroke();
 		app_ui_Icons.line(c,8,11,14,17);
 		app_ui_Icons.line(c,9,20,20,20);
+		break;
+	case "folder":case "folder-alert":
+		app_ui_Icons.poly(c,[3,6,3,19,21,19,21,8,11,8,9,5,3,5],true);
+		if(name == "folder-alert") {
+			app_ui_Icons.line(c,12,10.5,12,14);
+			c.fillRect(11,15.6,2,2);
+		} else {
+			app_ui_Icons.poly(c,[9,14,12,11,15,14]);
+			app_ui_Icons.line(c,12,11,12,16.5);
+		}
 		break;
 	case "moon":
 		c.beginPath();
@@ -13000,7 +13664,7 @@ var app_ui_Toolbar = function(tools,actions) {
 	});
 	this.addChild(this.panLock);
 	this.addChild(this.zoomLock);
-	this.zoomButton = app_ui_Ui.labelButton(null,app_ui_ZoomMenu.label(1),function() {
+	this.zoomButton = app_ui_Ui.labelButton(null,app_Config.zoomLabel(1),function() {
 		actions.openZoomMenu(_gthis.zoomButton);
 	});
 	this.zoomButton.set_defaultIcon(app_ui_Icons.image("chevron-down",9));
@@ -13020,6 +13684,16 @@ var app_ui_Toolbar = function(tools,actions) {
 		tools.changed();
 	});
 	this.addChild(this.darkButton);
+	if(actions.openFolderMenu != null) {
+		this.folderButton = app_ui_Ui.iconToggle("folder","folder");
+		this.folderButton.set_isToggle(false);
+		this.folderIcon = this.folderButton.get_defaultIcon();
+		this.folderAlertIcon = app_ui_Icons.image("folder-alert",10);
+		this.folderButton.addEventListener("triggered",function(_) {
+			actions.openFolderMenu(_gthis.folderButton);
+		});
+		this.addChild(this.folderButton);
+	}
 	this.addChild(app_ui_Ui.iconButton("pdf",function() {
 		actions.exportPdf();
 	}));
@@ -13045,6 +13719,9 @@ app_ui_Toolbar.prototype = $extend(feathers_controls_ScrollContainer.prototype,{
 	,zoomButton: null
 	,darkButton: null
 	,stabilizerButton: null
+	,folderButton: null
+	,folderIcon: null
+	,folderAlertIcon: null
 	,updating: null
 	,swatch: function(color) {
 		var b = new feathers_controls_ToggleButton();
@@ -13084,8 +13761,15 @@ app_ui_Toolbar.prototype = $extend(feathers_controls_ScrollContainer.prototype,{
 		s.set_height(40);
 		return s;
 	}
+	,setFolderState: function(connected,needsPermission) {
+		if(this.folderButton == null) {
+			return;
+		}
+		this.folderButton.set_isSelected(connected);
+		this.folderButton.set_defaultIcon(needsPermission ? this.folderAlertIcon : this.folderIcon);
+	}
 	,setZoom: function(zoom) {
-		var text = app_ui_ZoomMenu.label(zoom);
+		var text = app_Config.zoomLabel(zoom);
 		if(this.zoomButton.get_label() != text) {
 			this.zoomButton.set_label(text);
 		}
@@ -13216,104 +13900,6 @@ app_ui_Ui.separator = function() {
 	q.set_touchable(false);
 	return q;
 };
-var app_ui_ZoomMenu = function(onSelect) {
-	this.isOpen = false;
-	this.items = [];
-	var _gthis = this;
-	starling_display_Sprite.call(this);
-	this.onSelect = onSelect;
-	this.set_visible(false);
-	this.blocker = new starling_display_Quad(10,10,0);
-	this.blocker.set_alpha(0);
-	this.blocker.addEventListener("touch",function(e) {
-		if(e.getTouch(_gthis.blocker,"ended") != null) {
-			_gthis.close();
-		}
-	});
-	this.addChild(this.blocker);
-	this.border = app_ui_Icons.roundSkin(1);
-	this.addChild(this.border);
-	this.panel = new feathers_controls_LayoutGroup();
-	var layout = new feathers_layout_VerticalLayout();
-	layout.set_padding(4);
-	layout.set_gap(1);
-	layout.set_horizontalAlign("justify");
-	this.panel.set_layout(layout);
-	this.panel.set_backgroundSkin(app_ui_Icons.roundSkin(7));
-	this.panel.set_width(96);
-	this.addChild(this.panel);
-	var _g = 0;
-	var _g1 = app_ui_ZoomMenu.LEVELS;
-	while(_g < _g1.length) {
-		var level = [_g1[_g]];
-		++_g;
-		var b = new feathers_controls_ToggleButton();
-		b.set_isToggle(false);
-		b.set_defaultSkin(app_ui_Icons.roundSkin(3,0));
-		b.setSkinForState("hover",app_ui_Icons.roundSkin(3));
-		b.setSkinForState("down",app_ui_Icons.roundSkin(4));
-		b.set_defaultSelectedSkin(app_ui_Icons.roundSkin(5));
-		b.set_label(app_ui_ZoomMenu.label(level[0]));
-		b.set_fontStyles(app_ui_Ui.format(14));
-		b.set_horizontalAlign("center");
-		b.set_height(34);
-		b.addEventListener("triggered",(function(level) {
-			return function(_) {
-				_gthis.close();
-				onSelect(level[0]);
-			};
-		})(level));
-		this.items.push(b);
-		this.panel.addChild(b);
-	}
-};
-$hxClasses["app.ui.ZoomMenu"] = app_ui_ZoomMenu;
-app_ui_ZoomMenu.__name__ = "app.ui.ZoomMenu";
-app_ui_ZoomMenu.label = function(zoom) {
-	return Math.round(zoom * 100) + "%";
-};
-app_ui_ZoomMenu.__super__ = starling_display_Sprite;
-app_ui_ZoomMenu.prototype = $extend(starling_display_Sprite.prototype,{
-	onSelect: null
-	,blocker: null
-	,panel: null
-	,border: null
-	,items: null
-	,isOpen: null
-	,open: function(anchor,zoom,stageWidth,stageHeight) {
-		this.blocker.set_width(stageWidth);
-		this.blocker.set_height(stageHeight);
-		var best = 0;
-		var _g = 0;
-		var _g1 = app_ui_ZoomMenu.LEVELS.length;
-		while(_g < _g1) {
-			var i = _g++;
-			if(Math.abs(app_ui_ZoomMenu.LEVELS[i] - zoom) < Math.abs(app_ui_ZoomMenu.LEVELS[best] - zoom)) {
-				best = i;
-			}
-		}
-		var _g = 0;
-		var _g1 = this.items.length;
-		while(_g < _g1) {
-			var i = _g++;
-			this.items[i].set_isSelected(i == best && Math.abs(app_ui_ZoomMenu.LEVELS[i] - zoom) < 0.005);
-		}
-		this.panel.validate();
-		this.panel.set_x(Math.max(4,Math.min(anchor.x + (anchor.width - this.panel.get_width()) / 2,stageWidth - this.panel.get_width() - 4)));
-		this.panel.set_y(anchor.y + anchor.height + 4);
-		this.border.set_x(this.panel.get_x() - 1);
-		this.border.set_y(this.panel.get_y() - 1);
-		this.border.set_width(this.panel.get_width() + 2);
-		this.border.set_height(this.panel.get_height() + 2);
-		this.isOpen = true;
-		this.set_visible(true);
-	}
-	,close: function() {
-		this.isOpen = false;
-		this.set_visible(false);
-	}
-	,__class__: app_ui_ZoomMenu
-});
 var feathers_compat_AS3 = function() { };
 $hxClasses["feathers.compat.AS3"] = feathers_compat_AS3;
 feathers_compat_AS3.__name__ = "feathers.compat.AS3";
@@ -66477,6 +67063,7 @@ app_Config.CHUNK_SIZE = 512;
 app_Config.DENSITY = 2.0;
 app_Config.MIN_ZOOM = 0.5;
 app_Config.MAX_ZOOM = 8.0;
+app_Config.ZOOM_LEVELS = [0.5,0.75,1,1.5,2,3,4,6,8];
 app_Config.PEN_MIN_WIDTH = 1;
 app_Config.PEN_MAX_WIDTH = 40;
 app_Config.ERASER_MIN_WIDTH = 4;
@@ -66526,6 +67113,11 @@ app_store_Db.NAME = "simple_pen";
 app_store_Db.VERSION = 1;
 app_store_Db.META = "meta";
 app_store_Db.CHUNKS = "chunks";
+app_store_FolderSync.LIBRARY_FILE = "library.json";
+app_store_FolderSync.PAGES_DIR = "pages";
+app_store_FolderSync.HANDLE_KEY = "folderHandle";
+app_store_FolderSync.FORMAT = "simple-pen";
+app_store_FolderSync.CHUNK_NAME = new EReg("^(-?\\d+)_(-?\\d+)\\.chunk$","");
 app_ui_BinderPanel.WIDTH = 300;
 feathers_core_FeathersControl.HELPER_POINT = new starling_geom_Point();
 feathers_core_FeathersControl.INVALIDATION_FLAG_ALL = "all";
@@ -66549,8 +67141,8 @@ app_ui_Icons.cache = new haxe_ds_StringMap();
 feathers_controls_LayoutGroup.INVALIDATION_FLAG_CLIPPING = "clipping";
 feathers_controls_LayoutGroup.ALTERNATE_STYLE_NAME_TOOLBAR = "feathers-toolbar-layout-group";
 app_ui_Theme.dark = false;
-app_ui_Theme.LIGHT = [16250871,14342874,3355443,15329769,14540253,13886963,29362,16777215,2236962,7829367];
-app_ui_Theme.DARK = [2368548,3947580,15263976,3421236,4210752,1918822,5682409,2894892,15658734,10132122];
+app_ui_Theme.LIGHT = [16250871,14342874,3355443,15329769,14540253,13886963,29362,16777215,2236962,7829367,13983232];
+app_ui_Theme.DARK = [2368548,3947580,15263976,3421236,4210752,1918822,5682409,2894892,15658734,10132122,15113984];
 app_ui_Theme.tinted = [];
 app_ui_Theme.listeners = [];
 feathers_controls_Scroller.INVALIDATION_FLAG_SCROLL_BAR_RENDERER = "scrollBarRenderer";
@@ -66569,7 +67161,6 @@ feathers_controls_ScrollContainer.ALTERNATE_STYLE_NAME_TOOLBAR = "feathers-toolb
 app_ui_Toolbar.HEIGHT = 52;
 app_ui_Ui.BUTTON_SIZE = 40;
 app_ui_Ui.formats = [];
-app_ui_ZoomMenu.LEVELS = [0.5,0.75,1,1.5,2,3,4,6,8];
 feathers_compat_Capabilities.dpi = 72;
 feathers_compat_Capabilities.simulateDPad = false;
 feathers_compat_Capabilities.isTablet = false;
