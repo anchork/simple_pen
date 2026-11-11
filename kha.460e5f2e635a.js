@@ -4656,6 +4656,36 @@ app_export_PdfExporter.download = function(blob,name) {
 		URL.revokeObjectURL(url);
 	},30000);
 };
+var app_input_InputDebug = function() { };
+$hxClasses["app.input.InputDebug"] = app_input_InputDebug;
+app_input_InputDebug.__name__ = "app.input.InputDebug";
+app_input_InputDebug.log = function(text) {
+	if(!app_input_InputDebug.enabled) {
+		return;
+	}
+	if(app_input_InputDebug.box == null) {
+		app_input_InputDebug.box = window.document.createElement("div");
+		app_input_InputDebug.box.style.cssText = "position:fixed;left:8px;bottom:70px;z-index:10;pointer-events:none;" + "font:11px/1.35 ui-monospace,monospace;color:#fff;background:rgba(0,0,0,.65);" + "padding:6px 8px;border-radius:6px;white-space:pre;max-width:95vw;overflow:hidden";
+		window.document.body.appendChild(app_input_InputDebug.box);
+	}
+	var t = (window.performance.now() | 0) % 100000;
+	app_input_InputDebug.lines.push(StringTools.lpad(t == null ? "null" : "" + t," ",5) + " " + text);
+	if(app_input_InputDebug.lines.length > 14) {
+		app_input_InputDebug.lines.shift();
+	}
+	app_input_InputDebug.box.textContent = app_input_InputDebug.lines.join("\n");
+};
+app_input_InputDebug.logMove = function(text) {
+	if(!app_input_InputDebug.enabled) {
+		return;
+	}
+	var now = window.performance.now();
+	if(now - app_input_InputDebug.lastMoveLog < 100) {
+		return;
+	}
+	app_input_InputDebug.lastMoveLog = now;
+	app_input_InputDebug.log(text);
+};
 var app_input_PointerInput = function(canvas,target) {
 	this.safariScale = 1;
 	this.pendingPoints = [];
@@ -4672,6 +4702,7 @@ var app_input_PointerInput = function(canvas,target) {
 	this.ignored = new haxe_ds_IntMap();
 	this.drawType = null;
 	this.drawPointer = -1;
+	this.lastPenTime = -1e9;
 	this.penSeen = false;
 	var _gthis = this;
 	this.canvas = canvas;
@@ -4723,8 +4754,8 @@ app_input_PointerInput.penEraser = function(e) {
 	return (e.buttons & 34) != 0;
 };
 app_input_PointerInput.isPalm = function(e) {
-	if(!(e.width > 40)) {
-		return e.height > 40;
+	if(!(e.width > 80)) {
+		return e.height > 80;
 	} else {
 		return true;
 	}
@@ -4733,6 +4764,7 @@ app_input_PointerInput.prototype = {
 	canvas: null
 	,target: null
 	,penSeen: null
+	,lastPenTime: null
 	,drawPointer: null
 	,drawType: null
 	,ignored: null
@@ -4751,8 +4783,15 @@ app_input_PointerInput.prototype = {
 	,onDown: function(e) {
 		var x = e.clientX;
 		var y = e.clientY;
+		if(e.pointerType == "pen") {
+			this.lastPenTime = e.timeStamp;
+		}
+		if(app_input_InputDebug.enabled) {
+			app_input_InputDebug.log("down " + e.pointerType + " #" + e.pointerId + " " + (x | 0) + "," + (y | 0) + " w" + (e.width | 0) + " h" + (e.height | 0) + " b" + e.buttons + " p" + Math.round(e.pressure * 100) / 100);
+		}
 		if(this.target.isUiAt(x,y)) {
 			this.ignored.h[e.pointerId] = true;
+			app_input_InputDebug.log("  -> UI");
 			return;
 		}
 		e.preventDefault();
@@ -4770,18 +4809,22 @@ app_input_PointerInput.prototype = {
 			if(this.drawPointer != -1) {
 				this.endStroke();
 			}
-			this.resetGesture();
+			this.rejectTouches();
 			this.startStroke(e,x,y);
 			break;
 		case "touch":
-			if(app_input_PointerInput.isPalm(e) || this.drawPointer != -1 && this.drawType == "pen") {
+			var penActive = this.drawPointer != -1 && this.drawType == "pen" || e.timeStamp - this.lastPenTime < 500;
+			if(penActive) {
 				this.ignored.h[e.pointerId] = true;
+				app_input_InputDebug.log("  -> ignored (pen active: palm)");
 				return;
 			}
 			this.touches.h[e.pointerId] = { x : x, y : y};
-			if(!this.penSeen && this.touchCount() == 1 && this.drawPointer == -1) {
+			if(!this.penSeen && this.touchCount() == 1 && this.drawPointer == -1 && !app_input_PointerInput.isPalm(e)) {
+				app_input_InputDebug.log("  -> may draw");
 				this.beginPending(e);
 			} else {
+				app_input_InputDebug.log("  -> gesture (" + this.touchCount() + " touches" + (app_input_PointerInput.isPalm(e) ? ", large" : "") + ")");
 				this.cancelPending();
 				if(this.drawPointer != -1 && this.drawType == "touch") {
 					this.endStroke();
@@ -4801,6 +4844,9 @@ app_input_PointerInput.prototype = {
 	}
 	,onMove: function(e) {
 		var id = e.pointerId;
+		if(e.pointerType == "pen") {
+			this.lastPenTime = e.timeStamp;
+		}
 		if(this.ignored.h.hasOwnProperty(id)) {
 			if(e.pointerType != "touch") {
 				this.target.hoverEnd();
@@ -4813,7 +4859,7 @@ app_input_PointerInput.prototype = {
 				this.endStroke();
 			} else if(this.drawPointer == -1 && contact && !this.target.isUiAt(e.clientX,e.clientY)) {
 				this.penSeen = true;
-				this.resetGesture();
+				this.rejectTouches();
 				this.startStroke(e,e.clientX,e.clientY);
 				return;
 			}
@@ -4874,6 +4920,12 @@ app_input_PointerInput.prototype = {
 	}
 	,onUp: function(e) {
 		var id = e.pointerId;
+		if(app_input_InputDebug.enabled && e.type != "lostpointercapture") {
+			app_input_InputDebug.log("" + (e.type == "pointercancel" ? "CANCEL" : "up") + " " + e.pointerType + " #" + id);
+		}
+		if(e.pointerType == "pen") {
+			this.lastPenTime = e.timeStamp;
+		}
 		if(this.ignored.h.hasOwnProperty(id)) {
 			this.ignored.remove(id);
 			return;
@@ -4899,6 +4951,9 @@ app_input_PointerInput.prototype = {
 			return;
 		}
 		e.preventDefault();
+		if(app_input_InputDebug.enabled) {
+			app_input_InputDebug.logMove("wheel dx" + (e.deltaX | 0) + " dy" + (e.deltaY | 0) + " mode" + e.deltaMode + (e.ctrlKey ? " ctrl" : "") + (e.metaKey ? " meta" : ""));
+		}
 		var unit = e.deltaMode == 1 ? 16.0 : e.deltaMode == 2 ? 400.0 : 1.0;
 		var dx = e.deltaX * unit;
 		var dy = e.deltaY * unit;
@@ -4956,6 +5011,7 @@ app_input_PointerInput.prototype = {
 	}
 	,onSafariGesture: function(e) {
 		e.preventDefault();
+		app_input_InputDebug.logMove("safari " + Std.string(e.type) + " scale " + Std.string(e.scale));
 		if(this.touchCount() > 0) {
 			return;
 		}
@@ -5048,11 +5104,21 @@ app_input_PointerInput.prototype = {
 			return d / n;
 		}
 	}
+	,rejectTouches: function() {
+		this.cancelPending();
+		var id = this.touches.keys();
+		while(id.hasNext()) {
+			var id1 = id.next();
+			this.ignored.h[id1] = true;
+		}
+		this.touches.h = { };
+		this.resetGesture();
+	}
 	,applyGesture: function() {
-		if(this.gestureCount == 0) {
+		if(this.gestureCount < 2) {
 			return;
 		}
-		if(this.gestureCount == 1 && !this.penSeen) {
+		if(this.drawPointer != -1 && this.drawType == "pen") {
 			return;
 		}
 		var n = 0;
@@ -5082,6 +5148,9 @@ app_input_PointerInput.prototype = {
 		var cy = sy / n;
 		if(!this.target.get_panLocked()) {
 			this.target.panBy(cx - this.gestureX,cy - this.gestureY);
+		}
+		if(app_input_InputDebug.enabled) {
+			app_input_InputDebug.logMove("gesture n" + n + " pan " + (cx - this.gestureX | 0) + "," + (cy - this.gestureY | 0) + (this.target.get_panLocked() ? " (pan locked)" : "") + (this.target.get_zoomLocked() ? " (zoom locked)" : ""));
 		}
 		if(n >= 2 && !this.target.get_zoomLocked()) {
 			var dist = this.spread(cx,cy);
@@ -66206,7 +66275,12 @@ app_export_PdfExporter.MAX_IMAGE_SIDE = 4096;
 app_export_PdfExporter.MARGIN = 32;
 app_export_PdfExporter.PT_PER_CANVAS_PX = 0.375;
 app_export_PdfExporter.MAX_PAGE_PT = 14400;
-app_input_PointerInput.PALM_SIZE = 40;
+app_input_InputDebug.MAX_LINES = 14;
+app_input_InputDebug.enabled = $global.location.search.indexOf("debug") != -1;
+app_input_InputDebug.lines = [];
+app_input_InputDebug.lastMoveLog = 0;
+app_input_PointerInput.PALM_SIZE = 80;
+app_input_PointerInput.PEN_GUARD_MS = 500;
 app_input_PointerInput.TOUCH_DRAW_DISTANCE = 8;
 app_input_PointerInput.TOUCH_DRAW_DELAY = 100;
 app_model_Palette.COLORS = [0,15113984,5682409,40563,15787074,29362,13983232,13400487];
