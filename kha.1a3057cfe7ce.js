@@ -3193,6 +3193,7 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 			_gthis.saveNow(true);
 		});
 		this.openCurrentPage();
+		this.handleLaunch();
 	}
 	,onFrame: function() {
 		this.chunks.update();
@@ -3430,6 +3431,50 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		this.library.currentPage = b.pages[index].id;
 		this.saveLibrary();
 		this.openCurrentPage();
+	}
+	,handleLaunch: function() {
+		var _gthis = this;
+		var url = new URL(location.href);
+		if(url.searchParams.has("new-note")) {
+			url.searchParams.delete("new-note");
+			window.history.replaceState(null,"",url.href);
+			this.newNote();
+		}
+		var lq = window.launchQueue;
+		if(lq != null) {
+			lq.setConsumer(function(params) {
+				var target = params.targetURL;
+				if(target != null && target.indexOf("new-note") != -1) {
+					_gthis.newNote();
+				}
+			});
+		}
+	}
+	,newNote: function() {
+		var _gthis = this;
+		if(this.brush.active) {
+			return;
+		}
+		var b = this.currentBinder();
+		var last = b.pages.length - 1;
+		var lastId = b.pages[last].id;
+		var current = this.currentPageIndex() == last;
+		this.db.chunkKeys(lastId).then(function(keys) {
+			if(b != _gthis.currentBinder() || b.pages.length == 0 || b.pages[b.pages.length - 1].id != lastId) {
+				return null;
+			}
+			var blank = keys.length == 0 && !(current && _gthis.chunks.get_residentCount() > 0);
+			if(blank) {
+				if(!current) {
+					_gthis.goToPage(last);
+				}
+			} else {
+				b.pages.push(app_model_Library.newPage());
+				b.updatedAt = new Date().getTime();
+				_gthis.goToPage(b.pages.length - 1);
+			}
+			return null;
+		});
 	}
 	,addPage: function() {
 		var b = this.currentBinder();
@@ -67341,6 +67386,7 @@ starling_display_DisplayObjectContainer.sBoundsPoint = new starling_geom_Point()
 starling_display_DisplayObjectContainer.sBroadcastListeners = [];
 starling_display_DisplayObjectContainer.sSortBuffer = [];
 starling_display_DisplayObjectContainer.sCacheToken = new starling_rendering_BatchToken();
+app_Root.NEW_NOTE_PARAM = "new-note";
 app_canvas_Brushes.SIZES = [4,8,16,32,64,128,256];
 app_canvas_Brushes.textures = [];
 app_canvas_EraserCursor.SEGMENTS = 72;
