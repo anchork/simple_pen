@@ -3279,7 +3279,7 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 	}
 	,strokeBegin: function(x,y,time,eraser) {
 		this.strokeErase = eraser || this.tools.tool == "eraser";
-		this.baseDiameter = (this.strokeErase ? this.tools.eraserWidth : this.tools.penWidth) * 2.0;
+		this.baseDiameter = this.strokeErase ? this.eraserDiameter() : this.tools.penWidth * 2.0;
 		this.eraseScale = 1;
 		this.speed = 0;
 		this.speedX = x;
@@ -3369,6 +3369,9 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		this.hovering = false;
 		this.updateCursor();
 	}
+	,eraserDiameter: function() {
+		return this.tools.eraserWidth * 2.0 / this.world.zoom;
+	}
 	,updateCursor: function() {
 		if(this.cursor == null) {
 			return;
@@ -3381,7 +3384,7 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 			return;
 		}
 		var scale = erasing ? this.eraseScale : 1;
-		this.cursor.setDiameter(this.tools.eraserWidth * 2.0 * scale * (this.world.zoom / 2.0));
+		this.cursor.setDiameter(this.eraserDiameter() * scale * (this.world.zoom / 2.0));
 		this.cursor.moveTo(this.pointerX,this.pointerY);
 	}
 	,panBy: function(dx,dy) {
