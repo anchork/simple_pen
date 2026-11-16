@@ -1,15 +1,11 @@
 [https://anchork.github.io/simple_pen/](https://anchork.github.io/simple_pen/)
 
-軽量ペン描画アプリ
-ベクターを利用せず直接ピクセルを描画するためたくさんの線を書いても重くなりません
-無限キャンバスではみ出ししもののあなたを受け入れます
-手をついてたら描画されて煩わしいですいか？パームリジェクションがあります。
-手をついた時パンされるのが煩わしいですかパンロック機能があります
-手をついたとき勝手にズームされるのが煩わしいですかズームロック機能があります
-突然アプリがクラッシュした時のことが心配ですか　自動で保存されます
-一時ファイルが閲覧するためにアプリが必要ですか　いいえ一時ファイルはhtmlです　ブラウザあればどこでもメモを閲覧できます
-固定されたパレット　メモを書くのに何万色の選択肢が必要でしょうか？このアプリはパレットが固定です。Okabe-itoパレットを採用し色覚障害に配慮したパレットを用意しています。
-たくさんの色が欲しい？あなたの筆入れには何色のペンが入ってますか
-図形描画はありません。メモを取るのに定規を取り出しますか？
-バインダー機能がありmたくさんのメモを取れます
-このアプリは選択肢を制限しゆーざーを選択から解放しメモを取ることに集中させます。
+A lightweight app for handwritten notes
+Open a note and start writing. A fixed palette and a small set of tools help you spend less time making choices and more time taking notes.
+- Fast pixel-based drawing. Ink goes straight onto the canvas as pixels, so drawing stays responsive even after you’ve made hundreds of strokes.
+- An infinite canvas. Keep writing, sketch in the margins, or follow an idea wherever it goes. There’s always room.
+- Rest your hand while you write. Palm rejection helps prevent stray marks. Separate pan and zoom locks keep the canvas from moving or changing scale when your hand touches the screen.
+- Autosave with HTML files. Your notes are saved automatically to help you recover after a crash. You can open the saved HTML files in a web browser.
+- A fixed, colorblind-friendly palette. The app uses the Okabe–Ito palette, a small set of colors designed to be distinguishable by people with common forms of color vision deficiency.
+- Freehand tools for quick notes. There are no shape tools. When you need a box or an arrow, just draw it.
+- Binders for your notes. Keep related notes together and give each project or topic its own binder.

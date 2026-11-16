@@ -1,6 +1,6 @@
 // Service worker: caches the whole app for offline use.
 // release.js fills in the version and the file list (the placeholders below).
-const CACHE = 'simple-pen-b503b9412444';
+const CACHE = 'simple-pen-20b4eda28a33';
 const FILES = ['./', "README.md", "favicon.ico", "icons/apple-touch-icon.png", "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "index.html", "kha.5a5c64d9c619.js", "manifest.webmanifest"];
 
 self.addEventListener('install', event => {
