@@ -3291,7 +3291,7 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		var _this = this.world;
 		var _this1 = this.world;
 		this.brush.begin(_this.viewX + x / (_this.zoom / 2.0),_this1.viewY + y / (_this1.zoom / 2.0),this.baseDiameter);
-		this.stabilizing = this.tools.stabilizer && !this.strokeErase;
+		this.stabilizing = this.tools.stabilizer;
 		this.stabilizer.reset(x,y,time);
 		this.rawX = x;
 		this.rawY = y;
@@ -3300,23 +3300,23 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		this.updateCursor();
 	}
 	,strokeMove: function(x,y,time) {
-		if(this.strokeErase) {
-			this.growEraser(x,y,time);
-		}
 		this.rawX = x;
 		this.rawY = y;
+		var px = x;
+		var py = y;
 		if(this.stabilizing) {
 			this.stabilizer.filter(x,y,time);
-			var _this = this.world;
-			var _this1 = this.world;
-			this.brush.move(_this.viewX + this.stabilizer.x / (_this.zoom / 2.0),_this1.viewY + this.stabilizer.y / (_this1.zoom / 2.0));
-		} else {
-			var _this = this.world;
-			var _this1 = this.world;
-			this.brush.move(_this.viewX + x / (_this.zoom / 2.0),_this1.viewY + y / (_this1.zoom / 2.0));
+			px = this.stabilizer.x;
+			py = this.stabilizer.y;
 		}
-		this.pointerX = x;
-		this.pointerY = y;
+		if(this.strokeErase) {
+			this.growEraser(px,py,time);
+		}
+		var _this = this.world;
+		var _this1 = this.world;
+		this.brush.move(_this.viewX + px / (_this.zoom / 2.0),_this1.viewY + py / (_this1.zoom / 2.0));
+		this.pointerX = px;
+		this.pointerY = py;
 		this.updateCursor();
 	}
 	,strokeEnd: function() {
@@ -3889,6 +3889,7 @@ var app_canvas_Chunk = function(cx,cy) {
 	this.pending = [];
 	this.frameCoords = [];
 	this.disposed = false;
+	this.hasInk = false;
 	this.dirty = false;
 	this.ready = true;
 	this.cx = cx;
@@ -3913,6 +3914,7 @@ app_canvas_Chunk.prototype = {
 	,image: null
 	,ready: null
 	,dirty: null
+	,hasInk: null
 	,disposed: null
 	,frameCoords: null
 	,pending: null
@@ -3933,7 +3935,9 @@ var app_canvas_ChunkEdit = function(cx,cy) {
 	this.w = 0;
 	this.y = 0;
 	this.x = 0;
-	this.full = null;
+	this.drewInk = false;
+	this.wasEmpty = false;
+	this.snapshot = null;
 	this.maxY = -Infinity;
 	this.maxX = -Infinity;
 	this.minY = Infinity;
@@ -3943,6 +3947,25 @@ var app_canvas_ChunkEdit = function(cx,cy) {
 };
 $hxClasses["app.canvas.ChunkEdit"] = app_canvas_ChunkEdit;
 app_canvas_ChunkEdit.__name__ = "app.canvas.ChunkEdit";
+app_canvas_ChunkEdit.warmUp = function() {
+	var size = 512;
+	var src = new starling_textures_RenderTexture(size,size,true,1);
+	var dst = new starling_textures_RenderTexture(size,size,true,1);
+	app_canvas_ChunkEdit.blit(src,dst,0,0);
+	src.dispose();
+	app_canvas_ChunkEdit.pool.push(dst);
+};
+app_canvas_ChunkEdit.blit = function(src,dst,dx,dy) {
+	if(app_canvas_ChunkEdit.blitter == null) {
+		app_canvas_ChunkEdit.blitter = new starling_display_Image(src);
+		app_canvas_ChunkEdit.blitter.set_blendMode("none");
+	}
+	app_canvas_ChunkEdit.blitter.set_texture(src);
+	app_canvas_ChunkEdit.blitter.readjustSize();
+	app_canvas_ChunkEdit.blitter.set_x(dx);
+	app_canvas_ChunkEdit.blitter.set_y(dy);
+	dst.draw(app_canvas_ChunkEdit.blitter);
+};
 app_canvas_ChunkEdit.clamp = function(v,size) {
 	if(v < 0) {
 		return 0;
@@ -3959,13 +3982,18 @@ app_canvas_ChunkEdit.prototype = {
 	,minY: null
 	,maxX: null
 	,maxY: null
-	,full: null
+	,snapshot: null
+	,wasEmpty: null
+	,drewInk: null
 	,x: null
 	,y: null
 	,w: null
 	,h: null
 	,before: null
 	,after: null
+	,get_captured: function() {
+		return this.snapshot != null;
+	}
 	,include: function(lx,ly,r) {
 		if(lx - r < this.minX) {
 			this.minX = lx - r;
@@ -3980,7 +4008,24 @@ app_canvas_ChunkEdit.prototype = {
 			this.maxY = ly + r;
 		}
 	}
-	,finish: function(current) {
+	,capture: function(c) {
+		var size = 512;
+		this.snapshot = app_canvas_ChunkEdit.pool.length > 0 ? app_canvas_ChunkEdit.pool.pop() : new starling_textures_RenderTexture(size,size,true,1);
+		this.wasEmpty = !c.hasInk;
+		app_canvas_ChunkEdit.blit(c.rt,this.snapshot,0,0);
+	}
+	,isNoop: function() {
+		if(this.snapshot != null) {
+			if(this.wasEmpty) {
+				return !this.drewInk;
+			} else {
+				return false;
+			}
+		} else {
+			return true;
+		}
+	}
+	,finish: function(c) {
 		var size = 512;
 		var v = Math.floor(this.minX);
 		this.x = v < 0 ? 0 : v > size ? size : v;
@@ -3990,58 +4035,48 @@ app_canvas_ChunkEdit.prototype = {
 		this.w = (v < 0 ? 0 : v > size ? size : v) - this.x;
 		var v = Math.ceil(this.maxY);
 		this.h = (v < 0 ? 0 : v > size ? size : v) - this.y;
-		if(this.full == null || this.w <= 0 || this.h <= 0) {
-			this.full = null;
+		if(this.snapshot != null && this.w > 0 && this.h > 0) {
+			this.before = new starling_textures_RenderTexture(this.w,this.h,true,1);
+			this.after = new starling_textures_RenderTexture(this.w,this.h,true,1);
+			app_canvas_ChunkEdit.blit(this.snapshot,this.before,-this.x,-this.y);
+			app_canvas_ChunkEdit.blit(c.rt,this.after,-this.x,-this.y);
+		} else {
 			this.w = this.h = 0;
-			return;
 		}
-		this.before = this.crop(this.full);
-		this.after = this.crop(current);
-		this.full = null;
+		this.releaseSnapshot();
 	}
-	,unchanged: function() {
-		if(this.before == null) {
-			return true;
-		}
-		var a = new Uint32Array(this.before.buffer);
-		var b = new Uint32Array(this.after.buffer);
-		var _g = 0;
-		var _g1 = a.length;
-		while(_g < _g1) {
-			var i = _g++;
-			if(a[i] != b[i]) {
-				return false;
-			}
-		}
-		return true;
-	}
-	,paste: function(chunkPixels,box) {
-		var size = 512;
-		var row = this.w * 4;
-		var _g = 0;
-		var _g1 = this.h;
-		while(_g < _g1) {
-			var j = _g++;
-			chunkPixels.set(box.subarray(j * row,(j + 1) * row),((this.y + j) * size + this.x) * 4);
+	,paste: function(c,useBefore) {
+		var src = useBefore ? this.before : this.after;
+		if(src != null) {
+			app_canvas_ChunkEdit.blit(src,c.rt,this.x,this.y);
 		}
 	}
 	,byteSize: function() {
-		return (this.before != null ? this.before.length : 0) + (this.after != null ? this.after.length : 0) + (this.full != null ? this.full.length : 0);
+		return this.w * this.h * 4 * 2;
 	}
-	,crop: function(px) {
-		var size = 512;
-		var row = this.w * 4;
-		var out = new Uint8Array(row * this.h);
-		var _g = 0;
-		var _g1 = this.h;
-		while(_g < _g1) {
-			var j = _g++;
-			var start = ((this.y + j) * size + this.x) * 4;
-			out.set(px.subarray(start,start + row),j * row);
+	,dispose: function() {
+		this.releaseSnapshot();
+		if(this.before != null) {
+			this.before.dispose();
 		}
-		return out;
+		if(this.after != null) {
+			this.after.dispose();
+		}
+		this.before = this.after = null;
+	}
+	,releaseSnapshot: function() {
+		if(this.snapshot == null) {
+			return;
+		}
+		if(app_canvas_ChunkEdit.pool.length < 8) {
+			app_canvas_ChunkEdit.pool.push(this.snapshot);
+		} else {
+			this.snapshot.dispose();
+		}
+		this.snapshot = null;
 	}
 	,__class__: app_canvas_ChunkEdit
+	,__properties__: {get_captured:"get_captured"}
 };
 var app_canvas_ChunkManager = function(db,queue) {
 	this.ready = false;
@@ -4067,11 +4102,22 @@ var app_canvas_ChunkManager = function(db,queue) {
 	this.db = db;
 	this.queue = queue;
 	this.layer.set_touchable(false);
+	app_canvas_ChunkEdit.warmUp();
 };
 $hxClasses["app.canvas.ChunkManager"] = app_canvas_ChunkManager;
 app_canvas_ChunkManager.__name__ = "app.canvas.ChunkManager";
-app_canvas_ChunkManager.readChunk = function(c) {
-	return app_canvas_PixelIO.read(c.rt,512,512);
+app_canvas_ChunkManager.disposeAll = function(stack) {
+	var _g = 0;
+	while(_g < stack.length) {
+		var edits = stack[_g];
+		++_g;
+		var _g1 = 0;
+		while(_g1 < edits.length) {
+			var e = edits[_g1];
+			++_g1;
+			e.dispose();
+		}
+	}
 };
 app_canvas_ChunkManager.prototype = {
 	layer: null
@@ -4282,15 +4328,27 @@ app_canvas_ChunkManager.prototype = {
 			var coords = [c[0].frameCoords];
 			var edit = [this.recording != null ? this.recording.h[c[0].key] : null];
 			if(c[0].ready) {
-				if(edit[0] != null && edit[0].full == null) {
-					edit[0].full = app_canvas_PixelIO.read(c[0].rt,512,512);
+				if(edit[0] != null && edit[0].snapshot == null) {
+					edit[0].capture(c[0]);
+				}
+				if(!s.erase) {
+					c[0].hasInk = true;
+					if(edit[0] != null) {
+						edit[0].drewInk = true;
+					}
 				}
 				_gthis.renderer.draw(c[0],s,coords[0]);
 			} else {
 				c[0].pending.push((function(edit,coords,c) {
 					return function() {
-						if(edit[0] != null && edit[0].full == null) {
-							edit[0].full = app_canvas_PixelIO.read(c[0].rt,512,512);
+						if(edit[0] != null && edit[0].snapshot == null) {
+							edit[0].capture(c[0]);
+						}
+						if(!s.erase) {
+							c[0].hasInk = true;
+							if(edit[0] != null) {
+								edit[0].drewInk = true;
+							}
 						}
 						_gthis.renderer.draw(c[0],s,coords[0]);
 					};
@@ -4314,6 +4372,7 @@ app_canvas_ChunkManager.prototype = {
 		this.chunks.h[key] = c;
 		this.layer.addChild(c.image);
 		if(Object.prototype.hasOwnProperty.call(this.stored.h,key)) {
+			c.hasInk = true;
 			c.ready = false;
 			this.load(c);
 		}
@@ -4495,8 +4554,8 @@ app_canvas_ChunkManager.prototype = {
 				continue;
 			}
 			if(c[0].ready) {
-				e[0].finish(app_canvas_PixelIO.read(c[0].rt,512,512));
-				if(e[0].unchanged()) {
+				if(e[0].isNoop()) {
+					e[0].dispose();
 					HxOverrides.remove(edits,e[0]);
 					if(edits.length == 0) {
 						HxOverrides.remove(_gthis.undoStack,edits);
@@ -4504,12 +4563,14 @@ app_canvas_ChunkManager.prototype = {
 					if(_gthis.onHistoryChange != null) {
 						_gthis.onHistoryChange();
 					}
+				} else {
+					e[0].finish(c[0]);
 				}
 			} else {
 				c[0].pending.push((function(c,e) {
 					return function() {
-						e[0].finish(app_canvas_PixelIO.read(c[0].rt,512,512));
-						if(e[0].unchanged()) {
+						if(e[0].isNoop()) {
+							e[0].dispose();
 							HxOverrides.remove(edits,e[0]);
 							if(edits.length == 0) {
 								HxOverrides.remove(_gthis.undoStack,edits);
@@ -4517,6 +4578,8 @@ app_canvas_ChunkManager.prototype = {
 							if(_gthis.onHistoryChange != null) {
 								_gthis.onHistoryChange();
 							}
+						} else {
+							e[0].finish(c[0]);
 						}
 					};
 				})(c,e));
@@ -4524,6 +4587,8 @@ app_canvas_ChunkManager.prototype = {
 		}
 		if(this.undoStack.indexOf(edits) < 0) {
 			this.redoStack = oldRedo;
+		} else {
+			app_canvas_ChunkManager.disposeAll(oldRedo);
 		}
 		this.trimHistory();
 		if(this.onHistoryChange != null) {
@@ -4555,7 +4620,6 @@ app_canvas_ChunkManager.prototype = {
 		return true;
 	}
 	,apply: function(edits,before) {
-		var _gthis = this;
 		if(this.pageId == null) {
 			return;
 		}
@@ -4565,38 +4629,26 @@ app_canvas_ChunkManager.prototype = {
 			++_g;
 			var c = [this.chunkAt(e[0].cx,e[0].cy,true)];
 			if(c[0].ready) {
-				var px = before ? e[0].before : e[0].after;
-				if(!(px == null || c[0].disposed)) {
-					var full = app_canvas_PixelIO.read(c[0].rt,512,512);
-					e[0].paste(full,px);
-					_gthis.writeChunk(c[0],full);
+				if(!c[0].disposed) {
+					e[0].paste(c[0],before);
+					c[0].hasInk = true;
 					c[0].dirty = true;
+					starling_core_Starling.get_current().setRequiresRedraw();
 				}
 			} else {
 				c[0].pending.push((function(c,e) {
 					return function() {
-						var px = before ? e[0].before : e[0].after;
-						if(px == null || c[0].disposed) {
+						if(c[0].disposed) {
 							return;
 						}
-						var full = app_canvas_PixelIO.read(c[0].rt,512,512);
-						e[0].paste(full,px);
-						_gthis.writeChunk(c[0],full);
+						e[0].paste(c[0],before);
+						c[0].hasInk = true;
 						c[0].dirty = true;
+						starling_core_Starling.get_current().setRequiresRedraw();
 					};
 				})(c,e));
 			}
 		}
-		starling_core_Starling.get_current().setRequiresRedraw();
-	}
-	,writeChunk: function(c,px) {
-		var size = 512;
-		var texture = starling_textures_Texture.fromBytes(haxe_io_Bytes.ofData(px.buffer),size,size,false,true,1);
-		var img = new starling_display_Image(texture);
-		img.set_blendMode("none");
-		c.rt.draw(img);
-		img.dispose();
-		texture.dispose();
 		starling_core_Starling.get_current().setRequiresRedraw();
 	}
 	,trimHistory: function() {
@@ -4620,14 +4672,28 @@ app_canvas_ChunkManager.prototype = {
 				var e = _g1[_g];
 				++_g;
 				bytes -= e.byteSize();
+				e.dispose();
 			}
 		}
 	}
 	,clearHistory: function() {
+		if(this.recording != null) {
+			var h = this.recording.h;
+			var e_h = h;
+			var e_keys = Object.keys(h);
+			var e_length = e_keys.length;
+			var e_current = 0;
+			while(e_current < e_length) {
+				var e = e_h[e_keys[e_current++]];
+				e.dispose();
+			}
+		}
 		this.recording = null;
 		if(this.undoStack.length == 0 && this.redoStack.length == 0) {
 			return;
 		}
+		app_canvas_ChunkManager.disposeAll(this.undoStack);
+		app_canvas_ChunkManager.disposeAll(this.redoStack);
 		this.undoStack = [];
 		this.redoStack = [];
 		if(this.onHistoryChange != null) {
@@ -67824,6 +67890,8 @@ starling_display_DisplayObjectContainer.sCacheToken = new starling_rendering_Bat
 app_Root.NEW_NOTE_PARAM = "new-note";
 app_canvas_Brushes.SIZES = [4,8,16,32,64,128,256];
 app_canvas_Brushes.textures = [];
+app_canvas_ChunkEdit.pool = [];
+app_canvas_ChunkEdit.POOL_MAX = 8;
 app_canvas_EraserCursor.SEGMENTS = 72;
 starling_styles_MeshStyle.sPoint = new starling_geom_Point();
 starling_rendering_Effect.sProgramNameCache = new haxe_ds_StringMap();
