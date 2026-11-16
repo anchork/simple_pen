@@ -3165,7 +3165,7 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		this.tools.addEventListener("change",$bind(this,this.applyCanvasDark));
 		this.ui = new starling_display_Sprite();
 		this.addChild(this.ui);
-		this.toolbar = new app_ui_Toolbar(this.tools,{ exportPdf : $bind(this,this.exportPdf), openBinders : $bind(this,this.openBinders), openZoomMenu : $bind(this,this.openZoomMenu), openFolderMenu : app_store_FolderSync.isSupported() ? $bind(this,this.openFolderMenu) : null});
+		this.toolbar = new app_ui_Toolbar(this.tools,{ exportPdf : $bind(this,this.exportPdf), openBinders : $bind(this,this.openBinders), openZoomMenu : $bind(this,this.openZoomMenu), openFolderMenu : app_store_FolderSync.isSupported() ? $bind(this,this.openFolderMenu) : null, undo : $bind(this,this.undo), redo : $bind(this,this.redo)});
 		this.ui.addChild(this.toolbar);
 		this.pageBar = new app_ui_PageBar({ prev : function() {
 			_gthis.goToPage(_gthis.currentPageIndex() - 1);
@@ -3194,6 +3194,43 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		});
 		this.openCurrentPage();
 		this.handleLaunch();
+		this.chunks.onHistoryChange = function() {
+			_gthis.toolbar.setHistory(_gthis.chunks.get_canUndo(),_gthis.chunks.get_canRedo());
+		};
+		window.addEventListener("keydown",$bind(this,this.onUndoKey),true);
+	}
+	,undo: function() {
+		if(this.brush.active || this.busy) {
+			return;
+		}
+		if(this.chunks.undo()) {
+			this.scheduleSave();
+		}
+	}
+	,redo: function() {
+		if(this.brush.active || this.busy) {
+			return;
+		}
+		if(this.chunks.redo()) {
+			this.scheduleSave();
+		}
+	}
+	,onUndoKey: function(e) {
+		if(!(e.ctrlKey || e.metaKey) || e.altKey) {
+			return;
+		}
+		var key = e.key.toLowerCase();
+		if(key == "z") {
+			e.preventDefault();
+			if(e.shiftKey) {
+				this.redo();
+			} else {
+				this.undo();
+			}
+		} else if(key == "y") {
+			e.preventDefault();
+			this.redo();
+		}
 	}
 	,onFrame: function() {
 		this.chunks.update();
@@ -3250,6 +3287,7 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		this.speedT = time;
 		this.speedDist = 0;
 		this.chunks.setStyle({ diameter : this.baseDiameter, color : this.tools.get_color(), erase : this.strokeErase});
+		this.chunks.beginStroke();
 		var _this = this.world;
 		var _this1 = this.world;
 		this.brush.begin(_this.viewX + x / (_this.zoom / 2.0),_this1.viewY + y / (_this1.zoom / 2.0),this.baseDiameter);
@@ -3289,7 +3327,7 @@ app_Root.prototype = $extend(starling_display_Sprite.prototype,{
 		}
 		this.stabilizing = false;
 		this.brush.end();
-		this.chunks.flushStamps();
+		this.chunks.endStroke();
 		this.eraseScale = 1;
 		this.updateCursor();
 		this.scheduleSave();
@@ -3885,8 +3923,129 @@ app_canvas_Chunk.prototype = {
 	}
 	,__class__: app_canvas_Chunk
 };
+var app_canvas_ChunkEdit = function(cx,cy) {
+	this.after = null;
+	this.before = null;
+	this.h = 0;
+	this.w = 0;
+	this.y = 0;
+	this.x = 0;
+	this.full = null;
+	this.maxY = -Infinity;
+	this.maxX = -Infinity;
+	this.minY = Infinity;
+	this.minX = Infinity;
+	this.cx = cx;
+	this.cy = cy;
+};
+$hxClasses["app.canvas.ChunkEdit"] = app_canvas_ChunkEdit;
+app_canvas_ChunkEdit.__name__ = "app.canvas.ChunkEdit";
+app_canvas_ChunkEdit.clamp = function(v,size) {
+	if(v < 0) {
+		return 0;
+	} else if(v > size) {
+		return size;
+	} else {
+		return v;
+	}
+};
+app_canvas_ChunkEdit.prototype = {
+	cx: null
+	,cy: null
+	,minX: null
+	,minY: null
+	,maxX: null
+	,maxY: null
+	,full: null
+	,x: null
+	,y: null
+	,w: null
+	,h: null
+	,before: null
+	,after: null
+	,include: function(lx,ly,r) {
+		if(lx - r < this.minX) {
+			this.minX = lx - r;
+		}
+		if(ly - r < this.minY) {
+			this.minY = ly - r;
+		}
+		if(lx + r > this.maxX) {
+			this.maxX = lx + r;
+		}
+		if(ly + r > this.maxY) {
+			this.maxY = ly + r;
+		}
+	}
+	,finish: function(current) {
+		var size = 512;
+		var v = Math.floor(this.minX);
+		this.x = v < 0 ? 0 : v > size ? size : v;
+		var v = Math.floor(this.minY);
+		this.y = v < 0 ? 0 : v > size ? size : v;
+		var v = Math.ceil(this.maxX);
+		this.w = (v < 0 ? 0 : v > size ? size : v) - this.x;
+		var v = Math.ceil(this.maxY);
+		this.h = (v < 0 ? 0 : v > size ? size : v) - this.y;
+		if(this.full == null || this.w <= 0 || this.h <= 0) {
+			this.full = null;
+			this.w = this.h = 0;
+			return;
+		}
+		this.before = this.crop(this.full);
+		this.after = this.crop(current);
+		this.full = null;
+	}
+	,unchanged: function() {
+		if(this.before == null) {
+			return true;
+		}
+		var a = new Uint32Array(this.before.buffer);
+		var b = new Uint32Array(this.after.buffer);
+		var _g = 0;
+		var _g1 = a.length;
+		while(_g < _g1) {
+			var i = _g++;
+			if(a[i] != b[i]) {
+				return false;
+			}
+		}
+		return true;
+	}
+	,paste: function(chunkPixels,box) {
+		var size = 512;
+		var row = this.w * 4;
+		var _g = 0;
+		var _g1 = this.h;
+		while(_g < _g1) {
+			var j = _g++;
+			chunkPixels.set(box.subarray(j * row,(j + 1) * row),((this.y + j) * size + this.x) * 4);
+		}
+	}
+	,byteSize: function() {
+		return (this.before != null ? this.before.length : 0) + (this.after != null ? this.after.length : 0) + (this.full != null ? this.full.length : 0);
+	}
+	,crop: function(px) {
+		var size = 512;
+		var row = this.w * 4;
+		var out = new Uint8Array(row * this.h);
+		var _g = 0;
+		var _g1 = this.h;
+		while(_g < _g1) {
+			var j = _g++;
+			var start = ((this.y + j) * size + this.x) * 4;
+			out.set(px.subarray(start,start + row),j * row);
+		}
+		return out;
+	}
+	,__class__: app_canvas_ChunkEdit
+};
 var app_canvas_ChunkManager = function(db,queue) {
 	this.ready = false;
+	this.onHistoryChange = null;
+	this.redoStack = [];
+	this.undoStack = [];
+	this.recording = null;
 	this.dark = false;
 	this.keepMaxY = -1;
 	this.keepMaxX = -1;
@@ -3908,6 +4067,9 @@ var app_canvas_ChunkManager = function(db,queue) {
 };
 $hxClasses["app.canvas.ChunkManager"] = app_canvas_ChunkManager;
 app_canvas_ChunkManager.__name__ = "app.canvas.ChunkManager";
+app_canvas_ChunkManager.readChunk = function(c) {
+	return app_canvas_PixelIO.read(c.rt,512,512);
+};
 app_canvas_ChunkManager.prototype = {
 	layer: null
 	,db: null
@@ -3926,6 +4088,10 @@ app_canvas_ChunkManager.prototype = {
 	,keepMaxX: null
 	,keepMaxY: null
 	,dark: null
+	,recording: null
+	,undoStack: null
+	,redoStack: null
+	,onHistoryChange: null
 	,ready: null
 	,get_residentCount: function() {
 		var n = 0;
@@ -3980,6 +4146,7 @@ app_canvas_ChunkManager.prototype = {
 		this.ready = false;
 		this.pageId = null;
 		this.generation++;
+		this.clearHistory();
 	}
 	,clearPage: function() {
 		var _gthis = this;
@@ -4026,6 +4193,7 @@ app_canvas_ChunkManager.prototype = {
 		this.queue.enqueue(function() {
 			return _gthis.db.deletePage(page);
 		});
+		this.clearHistory();
 		starling_core_Starling.get_current().setRequiresRedraw();
 	}
 	,setDark: function(value) {
@@ -4067,29 +4235,65 @@ app_canvas_ChunkManager.prototype = {
 				if(c.frameCoords.length == 0) {
 					this.touched.push(c);
 				}
-				c.frameCoords.push(x - cx * size);
-				c.frameCoords.push(y - cy * size);
+				var lx = x - cx * size;
+				var ly = y - cy * size;
+				c.frameCoords.push(lx);
+				c.frameCoords.push(ly);
+				if(this.recording != null) {
+					var edit = this.recording.h[c.key];
+					if(edit == null) {
+						edit = new app_canvas_ChunkEdit(c.cx,c.cy);
+						this.recording.h[c.key] = edit;
+					}
+					var r1 = r + 1;
+					if(lx - r1 < edit.minX) {
+						edit.minX = lx - r1;
+					}
+					if(ly - r1 < edit.minY) {
+						edit.minY = ly - r1;
+					}
+					if(lx + r1 > edit.maxX) {
+						edit.maxX = lx + r1;
+					}
+					if(ly + r1 > edit.maxY) {
+						edit.maxY = ly + r1;
+					}
+				}
 			}
 		}
 	}
 	,flushStamps: function() {
+		var _gthis = this;
 		if(this.touched.length == 0) {
 			return;
 		}
+		var s = this.style;
 		var _g = 0;
 		var _g1 = this.touched;
 		while(_g < _g1.length) {
-			var c = _g1[_g];
+			var c = [_g1[_g]];
 			++_g;
-			if(c.disposed) {
+			if(c[0].disposed) {
 				continue;
 			}
-			if(c.ready) {
-				this.renderer.draw(c,this.style,c.frameCoords);
+			var coords = [c[0].frameCoords];
+			var edit = [this.recording != null ? this.recording.h[c[0].key] : null];
+			if(c[0].ready) {
+				if(edit[0] != null && edit[0].full == null) {
+					edit[0].full = app_canvas_PixelIO.read(c[0].rt,512,512);
+				}
+				_gthis.renderer.draw(c[0],s,coords[0]);
 			} else {
-				c.pending.push({ style : this.style, coords : c.frameCoords});
+				c[0].pending.push((function(edit,coords,c) {
+					return function() {
+						if(edit[0] != null && edit[0].full == null) {
+							edit[0].full = app_canvas_PixelIO.read(c[0].rt,512,512);
+						}
+						_gthis.renderer.draw(c[0],s,coords[0]);
+					};
+				})(edit,coords,c));
 			}
-			c.frameCoords = [];
+			c[0].frameCoords = [];
 		}
 		this.touched = [];
 		starling_core_Starling.get_current().setRequiresRedraw();
@@ -4136,7 +4340,7 @@ app_canvas_ChunkManager.prototype = {
 			} else {
 				tmp = false;
 			}
-			if(tmp) {
+			if(tmp && (this.recording == null || !Object.prototype.hasOwnProperty.call(this.recording.h,c.key))) {
 				released.push(c);
 			}
 		}
@@ -4224,16 +4428,213 @@ app_canvas_ChunkManager.prototype = {
 				texture.dispose();
 			}
 			c.ready = true;
-			var _g1 = 0;
-			var _g2 = c.pending;
-			while(_g1 < _g2.length) {
-				var p = _g2[_g1];
-				++_g1;
-				this.renderer.draw(c,p.style,p.coords);
-			}
+			var work = c.pending;
 			c.pending = [];
+			var _g1 = 0;
+			while(_g1 < work.length) {
+				var fn = work[_g1];
+				++_g1;
+				fn();
+			}
 		}
 		starling_core_Starling.get_current().setRequiresRedraw();
+	}
+	,whenReady: function(c,fn) {
+		if(c.ready) {
+			fn();
+		} else {
+			c.pending.push(fn);
+		}
+	}
+	,get_canUndo: function() {
+		return this.undoStack.length > 0;
+	}
+	,get_canRedo: function() {
+		return this.redoStack.length > 0;
+	}
+	,beginStroke: function() {
+		this.flushStamps();
+		this.recording = new haxe_ds_StringMap();
+	}
+	,endStroke: function() {
+		var _gthis = this;
+		this.flushStamps();
+		var rec = this.recording;
+		this.recording = null;
+		if(rec == null) {
+			return;
+		}
+		var _g = [];
+		var h = rec.h;
+		var e_h = h;
+		var e_keys = Object.keys(h);
+		var e_length = e_keys.length;
+		var e_current = 0;
+		while(e_current < e_length) {
+			var e = e_h[e_keys[e_current++]];
+			_g.push(e);
+		}
+		var edits = _g;
+		if(edits.length == 0) {
+			return;
+		}
+		this.undoStack.push(edits);
+		var oldRedo = this.redoStack;
+		this.redoStack = [];
+		var _g = 0;
+		var _g1 = edits.slice();
+		while(_g < _g1.length) {
+			var e = [_g1[_g]];
+			++_g;
+			var c = [this.chunks.h[e[0].cx + "," + e[0].cy]];
+			if(c[0] == null) {
+				HxOverrides.remove(edits,e[0]);
+				continue;
+			}
+			if(c[0].ready) {
+				e[0].finish(app_canvas_PixelIO.read(c[0].rt,512,512));
+				if(e[0].unchanged()) {
+					HxOverrides.remove(edits,e[0]);
+					if(edits.length == 0) {
+						HxOverrides.remove(_gthis.undoStack,edits);
+					}
+					if(_gthis.onHistoryChange != null) {
+						_gthis.onHistoryChange();
+					}
+				}
+			} else {
+				c[0].pending.push((function(c,e) {
+					return function() {
+						e[0].finish(app_canvas_PixelIO.read(c[0].rt,512,512));
+						if(e[0].unchanged()) {
+							HxOverrides.remove(edits,e[0]);
+							if(edits.length == 0) {
+								HxOverrides.remove(_gthis.undoStack,edits);
+							}
+							if(_gthis.onHistoryChange != null) {
+								_gthis.onHistoryChange();
+							}
+						}
+					};
+				})(c,e));
+			}
+		}
+		if(this.undoStack.indexOf(edits) < 0) {
+			this.redoStack = oldRedo;
+		}
+		this.trimHistory();
+		if(this.onHistoryChange != null) {
+			this.onHistoryChange();
+		}
+	}
+	,undo: function() {
+		if(this.recording != null || this.undoStack.length == 0) {
+			return false;
+		}
+		var edits = this.undoStack.pop();
+		this.apply(edits,true);
+		this.redoStack.push(edits);
+		if(this.onHistoryChange != null) {
+			this.onHistoryChange();
+		}
+		return true;
+	}
+	,redo: function() {
+		if(this.recording != null || this.redoStack.length == 0) {
+			return false;
+		}
+		var edits = this.redoStack.pop();
+		this.apply(edits,false);
+		this.undoStack.push(edits);
+		if(this.onHistoryChange != null) {
+			this.onHistoryChange();
+		}
+		return true;
+	}
+	,apply: function(edits,before) {
+		var _gthis = this;
+		if(this.pageId == null) {
+			return;
+		}
+		var _g = 0;
+		while(_g < edits.length) {
+			var e = [edits[_g]];
+			++_g;
+			var c = [this.chunkAt(e[0].cx,e[0].cy,true)];
+			if(c[0].ready) {
+				var px = before ? e[0].before : e[0].after;
+				if(!(px == null || c[0].disposed)) {
+					var full = app_canvas_PixelIO.read(c[0].rt,512,512);
+					e[0].paste(full,px);
+					_gthis.writeChunk(c[0],full);
+					c[0].dirty = true;
+				}
+			} else {
+				c[0].pending.push((function(c,e) {
+					return function() {
+						var px = before ? e[0].before : e[0].after;
+						if(px == null || c[0].disposed) {
+							return;
+						}
+						var full = app_canvas_PixelIO.read(c[0].rt,512,512);
+						e[0].paste(full,px);
+						_gthis.writeChunk(c[0],full);
+						c[0].dirty = true;
+					};
+				})(c,e));
+			}
+		}
+		starling_core_Starling.get_current().setRequiresRedraw();
+	}
+	,writeChunk: function(c,px) {
+		var size = 512;
+		var texture = starling_textures_Texture.fromBytes(haxe_io_Bytes.ofData(px.buffer),size,size,false,true,1);
+		var img = new starling_display_Image(texture);
+		img.set_blendMode("none");
+		c.rt.draw(img);
+		img.dispose();
+		texture.dispose();
+		starling_core_Starling.get_current().setRequiresRedraw();
+	}
+	,trimHistory: function() {
+		var bytes = 0;
+		var _g = 0;
+		var _g1 = this.undoStack;
+		while(_g < _g1.length) {
+			var edits = _g1[_g];
+			++_g;
+			var _g2 = 0;
+			while(_g2 < edits.length) {
+				var e = edits[_g2];
+				++_g2;
+				bytes += e.byteSize();
+			}
+		}
+		while(this.undoStack.length > 100 || bytes > 100663296 && this.undoStack.length > 1) {
+			var _g = 0;
+			var _g1 = this.undoStack.shift();
+			while(_g < _g1.length) {
+				var e = _g1[_g];
+				++_g;
+				bytes -= e.byteSize();
+			}
+		}
+	}
+	,clearHistory: function() {
+		this.recording = null;
+		if(this.undoStack.length == 0 && this.redoStack.length == 0) {
+			return;
+		}
+		this.undoStack = [];
+		this.redoStack = [];
+		if(this.onHistoryChange != null) {
+			this.onHistoryChange();
+		}
+	}
+	,historyChanged: function() {
+		if(this.onHistoryChange != null) {
+			this.onHistoryChange();
+		}
 	}
 	,hasDirty: function() {
 		var h = this.chunks.h;
@@ -4305,7 +4706,7 @@ app_canvas_ChunkManager.prototype = {
 		}
 	}
 	,__class__: app_canvas_ChunkManager
-	,__properties__: {get_residentCount:"get_residentCount"}
+	,__properties__: {get_canRedo:"get_canRedo",get_canUndo:"get_canUndo",get_residentCount:"get_residentCount"}
 };
 var app_canvas_EraserCursor = function() {
 	this.diameter = -1;
@@ -5541,8 +5942,8 @@ var app_input_PointerInput = function(canvas,target) {
 	canvas.addEventListener("gesturestart",$bind(this,this.onSafariGesture),{ passive : false});
 	canvas.addEventListener("gesturechange",$bind(this,this.onSafariGesture),{ passive : false});
 	canvas.addEventListener("gestureend",$bind(this,this.onSafariGesture),{ passive : false});
-	window.addEventListener("keydown",$bind(this,this.onKey));
-	window.addEventListener("keyup",$bind(this,this.onKey));
+	window.addEventListener("keydown",$bind(this,this.onKey),true);
+	window.addEventListener("keyup",$bind(this,this.onKey),true);
 	window.addEventListener("blur",function(_) {
 		return _gthis.spaceDown = false;
 	});
@@ -9237,6 +9638,21 @@ app_ui_Icons.paint = function(c,name) {
 		break;
 	case "prev":
 		app_ui_Icons.poly(c,[15,5,8,12,15,19]);
+		break;
+	case "redo":case "undo":
+		c.save();
+		if(name == "redo") {
+			c.translate(24,0);
+			c.scale(-1,1);
+		}
+		c.beginPath();
+		c.moveTo(9,19);
+		c.lineTo(13,19);
+		c.arc(13,13.5,5.5,Math.PI / 2,-Math.PI / 2,true);
+		c.lineTo(6,8);
+		c.stroke();
+		app_ui_Icons.poly(c,[9.5,4.5,6,8,9.5,11.5]);
+		c.restore();
 		break;
 	case "rename":
 		app_ui_Icons.line(c,4,20,20,20);
@@ -14433,6 +14849,12 @@ var app_ui_Toolbar = function(tools,actions) {
 	});
 	this.addChild(this.stabilizerButton);
 	this.addChild(app_ui_Ui.separator());
+	this.undoButton = app_ui_Ui.iconButton("undo",actions.undo);
+	this.redoButton = app_ui_Ui.iconButton("redo",actions.redo);
+	this.addChild(this.undoButton);
+	this.addChild(this.redoButton);
+	this.setHistory(false,false);
+	this.addChild(app_ui_Ui.separator());
 	var colorGroup = new feathers_core_ToggleGroup();
 	var _g = 0;
 	var _g1 = app_model_Palette.COLORS.length;
@@ -14540,6 +14962,8 @@ app_ui_Toolbar.prototype = $extend(feathers_controls_ScrollContainer.prototype,{
 	,zoomButton: null
 	,darkButton: null
 	,stabilizerButton: null
+	,undoButton: null
+	,redoButton: null
 	,folderButton: null
 	,folderIcon: null
 	,folderAlertIcon: null
@@ -14594,6 +15018,12 @@ app_ui_Toolbar.prototype = $extend(feathers_controls_ScrollContainer.prototype,{
 		}
 		this.folderButton.set_isSelected(connected);
 		this.folderButton.set_defaultIcon(needsPermission ? this.folderAlertIcon : this.folderIcon);
+	}
+	,setHistory: function(canUndo,canRedo) {
+		this.undoButton.set_isEnabled(canUndo);
+		this.redoButton.set_isEnabled(canRedo);
+		this.undoButton.set_alpha(canUndo ? 1 : 0.35);
+		this.redoButton.set_alpha(canRedo ? 1 : 0.35);
 	}
 	,setZoom: function(zoom) {
 		var text = app_Config.zoomLabel(zoom);
@@ -67369,6 +67799,8 @@ app_Config.ERASER_GROW_SPEED_MIN = 0.8;
 app_Config.ERASER_GROW_SPEED_MAX = 3.0;
 app_Config.ERASER_MAX_SCALE = 3.0;
 app_Config.SAVE_DELAY_MS = 600;
+app_Config.UNDO_STEPS = 100;
+app_Config.UNDO_MEMORY = 100663296;
 starling_events_EventDispatcher.sBubbleChains = [];
 starling_geom_Matrix3D.sTemp = new Array(16);
 starling_display_DisplayObject.TOKEN_EXCLUDED = 2147483647;
